@@ -86,7 +86,13 @@ interface DetectedRunner {
 function runCapture(cmd: string, timeoutMs = 5000): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
     const isWin = process.platform === "win32";
-    const child = isWin ? spawn("cmd.exe", ["/d", "/c", cmd], { windowsHide: true }) : spawn("bash", ["-lc", cmd]);
+    // Obsidian is launched by the GUI (Dock/Spotlight/launchd), not from a terminal, so it starts
+    // with a minimal PATH -- none of the additions a user's shell rc file makes. -i (interactive)
+    // is what actually gets zsh to read ~/.zshrc (a login shell alone reads ~/.zprofile instead,
+    // which is often empty); -l covers bash users whose PATH lives in ~/.bash_profile.
+    const child = isWin
+      ? spawn("cmd.exe", ["/d", "/c", cmd], { windowsHide: true })
+      : spawn(process.env.SHELL || "/bin/zsh", ["-ilc", cmd]);
     let out = "";
     let done = false;
     const finish = (code: number) => {
@@ -111,25 +117,26 @@ function runCapture(cmd: string, timeoutMs = 5000): Promise<{ code: number; out:
 }
 
 async function detectRunners(): Promise<DetectedRunner[]> {
-  const found: DetectedRunner[] = [];
-  for (const probe of RUNNER_PROBES) {
-    const res = await runCapture(probe.checkCmd);
-    if (res.code !== 0) continue;
-    if (probe.verify && !probe.verify(res.out)) continue;
-    let models = probe.staticModels;
-    if (probe.liveModelsCmd) {
-      const live = await runCapture(probe.liveModelsCmd);
-      if (live.code === 0) {
-        const parsed = live.out
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => /^[\w.-]+(?:\/[\w.:-]+)+$/.test(l));
-        if (parsed.length) models = parsed;
+  const results = await Promise.all(
+    RUNNER_PROBES.map(async (probe): Promise<DetectedRunner | null> => {
+      const res = await runCapture(probe.checkCmd);
+      if (res.code !== 0) return null;
+      if (probe.verify && !probe.verify(res.out)) return null;
+      let models = probe.staticModels;
+      if (probe.liveModelsCmd) {
+        const live = await runCapture(probe.liveModelsCmd);
+        if (live.code === 0) {
+          const parsed = live.out
+            .split("\n")
+            .map((l) => l.trim())
+            .filter((l) => /^[\w.-]+(?:\/[\w.:-]+)+$/.test(l));
+          if (parsed.length) models = parsed;
+        }
       }
-    }
-    found.push({ id: probe.id, label: probe.label, models, configSnippet: probe.configSnippet });
-  }
-  return found;
+      return { id: probe.id, label: probe.label, models, configSnippet: probe.configSnippet };
+    }),
+  );
+  return results.filter((r): r is DetectedRunner => r !== null);
 }
 
 function isNewerVersion(a: string, b: string): boolean {
