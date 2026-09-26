@@ -28,15 +28,16 @@ TOKEN="$(sed -n 's/^  token: "\(.*\)"/\1/p' "$VAULT/crew/crew.md")"
 "${CREW[@]}" status >/dev/null && pass "status"
 
 # Built-in agents ship pre-filled (no {{BLANK: ...}} markers) and lint clean out of the box --
-# verifier enabled, planner/scout/devops disabled. A blank or a bad frontmatter field in any of
-# these would otherwise go unnoticed until a real vault hit it.
-for BUILTIN in verifier planner scout devops; do
+# verifier enabled, planner/scout/devops/watcher disabled. A blank or a bad frontmatter field in
+# any of these would otherwise go unnoticed until a real vault hit it.
+for BUILTIN in verifier planner scout devops watcher; do
   "${CREW[@]}" agent lint "$BUILTIN" >/dev/null && pass "built-in agent $BUILTIN lints clean" || fail "built-in agent $BUILTIN fails lint"
 done
 grep -q "^enabled: true$" "$VAULT/crew/agents/verifier/agent.md" && pass "verifier ships enabled" || fail "verifier should ship enabled"
-for BUILTIN in planner scout devops; do
+for BUILTIN in planner scout devops watcher; do
   grep -q "^enabled: false$" "$VAULT/crew/agents/$BUILTIN/agent.md" && pass "$BUILTIN ships disabled" || fail "$BUILTIN should ship disabled"
 done
+grep -q "task.blocked" "$VAULT/crew/agents/watcher/agent.md" && pass "watcher subscribes to task.blocked" || fail "watcher should subscribe to task.blocked"
 
 # Agent name validation: distinct, non-misleading errors for missing vs. malformed names -- the
 # old message hardcoded "--runner claude --model sonnet" as its usage example regardless of what
