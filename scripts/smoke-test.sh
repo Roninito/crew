@@ -89,6 +89,26 @@ tmp="$(mktemp)"; sed 's/default_timeout: 15m/default_timeout: 7m/' "$VAULT/crew/
 "${CREW[@]}" job run --as tester --task T-0002 --script "$VAULT/crew/templates/scripts/example-job.py" --timeout 2m >/dev/null
 "${CREW[@]}" jobs --json | grep -q '"timeout": "2m"' && pass "explicit --timeout still wins over the agent default" || fail "--timeout was overridden"
 
+# Per-agent job concurrency cap: tester's worker template sets jobs.max_concurrent: 1, so of two
+# jobs queued back to back, only one should be running at a time even though crew.md's global
+# limits.max_jobs (4) would otherwise let both run at once.
+"${CREW[@]}" job run --as tester --task T-0002 --script "$VAULT/crew/templates/scripts/example-job.py" >/dev/null
+"${CREW[@]}" job run --as tester --task T-0002 --script "$VAULT/crew/templates/scripts/example-job.py" >/dev/null
+n=0
+for i in $(seq 1 20); do
+  n="$("${CREW[@]}" jobs | grep tester | grep -c running || true)"
+  [ "$n" -ge 1 ] && break
+  sleep 0.25
+done
+[ "$n" = "1" ] && pass "agent's jobs.max_concurrent caps concurrent jobs for that agent" || fail "expected exactly 1 running tester job, got $n"
+n2=0
+for i in $(seq 1 40); do
+  n2="$("${CREW[@]}" jobs | grep tester | grep -c succeeded || true)"
+  [ "$n2" -ge 2 ] && break
+  sleep 0.5
+done
+[ "$n2" -ge 2 ] && pass "both capped jobs eventually ran to completion" || fail "expected both tester jobs to succeed, got $n2 succeeded"
+
 # Kill switch.
 "${CREW[@]}" stop --all >/dev/null && "${CREW[@]}" status | grep -q PAUSED && pass "kill switch pauses the crew"
 "${CREW[@]}" resume >/dev/null && pass "resume"

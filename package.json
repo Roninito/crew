@@ -5,6 +5,7 @@
     "install:all": "bash scripts/install.sh",
     "typecheck": "cd packages/crew && bunx tsc --noEmit && cd ../wrangler && bun run typecheck",
     "build:wrangler": "cd packages/wrangler && bun run build",
+    "test:wrangler": "cd packages/wrangler && bun run test",
     "smoke": "bash scripts/smoke-test.sh"
   }
 }

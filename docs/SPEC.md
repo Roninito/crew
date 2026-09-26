@@ -208,6 +208,8 @@ Agents do long work by writing a Bun or Python script, starting it as a job, and
 
 **The time limit** (step 4) is not the same thing as a task claim's `claim_minutes` (Vault layout, `crew.md`) -- that's bookkeeping on the task record, checking whether an agent has gone silent. This is a real process watchdog on the job's script. Resolved in order: `--timeout` on `crew job run`, else the agent's own `jobs.default_timeout` in its agent.md, else crew.md's `limits.default_job_timeout` (15m if that's unset too). A long-running job should call `renew()` periodically (see below) to keep its task claim alive independently of this.
 
+**Concurrency.** `crew.md`'s `limits.max_jobs` caps how many jobs run at once across every agent. An agent's own `jobs.max_concurrent` caps how many of *that* agent's jobs run at once, tighter than the global cap if set (a GPU-bound agent might cap itself at 1 even though the vault allows 4 overall). A job past either cap sits `queued` and fires `job.waiting` until a slot frees up.
+
 **Script helpers** (small libraries for Bun and Python)
 
 ```python
@@ -289,7 +291,7 @@ The views answer three questions at a glance: what's running, what's stuck, and 
 | Trace view | Task note | Timeline from `crew trace` | Open any linked item |
 | Status bar | Bottom | "crew ● 3 running · 2 sleeping · 1 needs review · $1.40 today" | Open Review inbox |
 
-**Spawn agent form.** Wrangler probes the host for known AI CLIs (Claude Code, Codex, opencode, Cursor) on PATH and offers detected ones in the Runner dropdown. Where a tool documents a live model-listing command (opencode) it queries it; where only known aliases exist (Claude Code: sonnet/opus/haiku) it uses a static list; otherwise the Model field falls back to free text. Detection is a convenience for the form, not a guarantee the runner works end to end: if the chosen runner has no matching entry under `runners:` in `crew/crew.md`, Wrangler creates the agent (it starts disabled either way) and shows a suggested config snippet to add, since crew.md is the human's own settings note and Wrangler doesn't write it for them.
+**Spawn agent form.** Wrangler probes the host for Claude Code and opencode on PATH and offers detected ones in the Runner dropdown -- the only two runners it detects today. (Codex and Cursor were dropped after a first pass: their unattended-safe invocation flags -- the approval/sandbox bypass each needs to run without a human watching -- aren't confidently known, and a wrong guess baked into a suggested config is worse than no suggestion. `Other (type manually)` still lets a human wire up any runner crew.md itself supports.) opencode's live `opencode models` is queried for its model list; Claude Code uses a static known-alias list (sonnet/opus/haiku); the Model field falls back to free text otherwise. Detection is a convenience for the form, not a guarantee the runner works end to end: if the chosen runner has no matching entry under `runners:` in `crew/crew.md`, Wrangler creates the agent (it starts disabled either way) and shows a suggested config snippet to add, since crew.md is the human's own settings note and Wrangler doesn't write it for them.
 
 **Updating Wrangler.** Settings has a "Check for updates" button: it compares the installed version against crew's latest GitHub release tag and, if newer, downloads `main.js`/`manifest.json`/`styles.css` in place. Reloading Obsidian picks up the update.
 

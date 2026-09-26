@@ -15,6 +15,15 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - name: Install dependencies
+        run: |
+          (cd packages/crew && bun install --silent)
+          (cd packages/wrangler && bun install --silent)
+      - name: Verify
+        run: |
+          bun run typecheck
+          bun run smoke
+          bun run test:wrangler
       - run: bash scripts/build-release.sh
       - run: |
           mkdir -p release

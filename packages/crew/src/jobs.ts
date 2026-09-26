@@ -100,6 +100,16 @@ function defaultTimeout(c: Crew, agent: string): string {
   return c.config().limits?.default_job_timeout ?? "15m";
 }
 
+// null means uncapped at the per-agent level; crew.md's limits.max_jobs still applies globally.
+function agentMaxConcurrent(c: Crew, agent: string): number | null {
+  if (agent === "human") return null;
+  try {
+    return getAgent(c, agent).def.jobs?.max_concurrent ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function jobRun(c: Crew, a: Args, o: Out): void {
   const agent = actorOf(a);
   const s = flag(a, "script");
@@ -167,11 +177,13 @@ export async function jobExec(c: Crew, id: string): Promise<void> {
   let announced = false;
   for (;;) {
     const got = await withMutex(c, () => {
-      const running = listJobs(c).filter((x) => x.status === "running" && pidAlive(x.pid)).length;
-      const locks = readLocks(c);
       const { j, md } = loadJob(c, id);
       if (j.status === "killed") return "killed";
-      if (running >= maxJobs || (j.lock && locks[j.lock])) return "wait";
+      const running = listJobs(c).filter((x) => x.status === "running" && pidAlive(x.pid));
+      const locks = readLocks(c);
+      if (running.length >= maxJobs || (j.lock && locks[j.lock])) return "wait";
+      const agentCap = agentMaxConcurrent(c, j.agent);
+      if (agentCap !== null && running.filter((x) => x.agent === j.agent).length >= agentCap) return "wait";
       if (j.lock) {
         locks[j.lock] = { job: id, since: new Date().toISOString() };
         writeJson(locksPath(c), locks);
