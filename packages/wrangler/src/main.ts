@@ -16,7 +16,9 @@ import {
   Setting,
   type WorkspaceLeaf,
   requestUrl,
+  setTooltip,
 } from "obsidian";
+import { type IconName, ICONS } from "./icons";
 import { VAULT_ASSETS } from "./vault-assets.generated";
 import { detectRunners, isNewerVersion, parseRunnersFromFrontmatter, platformAssetName, runCapture } from "./lib";
 
@@ -559,16 +561,16 @@ class CrewSidebarView extends CrewView {
     const mode = this.plugin.child ? "started by Wrangler" : "running separately (service or terminal)";
     server.createEl("p", { text: `Running on port ${s.server.port}, ${mode}.${s.paused ? " Paused by the kill switch." : ""}` });
     const row = server.createDiv({ cls: "crew-actions" });
-    if (s.paused) btn(row, "Resume agents", () => this.plugin.run(["resume"], true), true);
-    btn(row, "Stop server", async () => this.plugin.stopServer());
-    btn(row, "Copy API token", async () => {
+    if (s.paused) iconBtn(row, "play", "Resume agents (lift the kill switch)", () => this.plugin.run(["resume"], true), true);
+    iconBtn(row, "off-tag", "Stop the crew server", async () => this.plugin.stopServer());
+    iconBtn(row, "copy", "Copy API token", async () => {
       await navigator.clipboard.writeText(this.plugin.token);
       new Notice("Token copied.");
     });
 
     const head = el.createDiv({ cls: "crew-agents-head" });
     head.createEl("h4", { text: "Agents" });
-    btn(head, "Spawn agent", async () => new NewAgentModal(this.app, this.plugin).open());
+    iconBtn(head, "user-plus", "Spawn a new agent", async () => new NewAgentModal(this.app, this.plugin).open());
     if (!s.agents.length) el.createEl("p", { cls: "crew-muted", text: "No agents yet. Spawn one from a template." });
     for (const a of s.agents) {
       const card = el.createDiv({ cls: `crew-agent is-${a.state}` });
@@ -588,11 +590,11 @@ class CrewSidebarView extends CrewView {
       if (a.lastLog) card.createDiv({ cls: "crew-log", text: a.lastLog });
       const acts = card.createDiv({ cls: "crew-actions" });
       if (a.state !== "disabled") {
-        btn(acts, "Run now", () => this.plugin.run(["wake", a.name], true));
-        btn(acts, "Pause", () => this.plugin.run(["agent", "disable", a.name], true));
-      } else btn(acts, "Enable", () => this.plugin.run(["agent", "enable", a.name], true));
-      btn(acts, "Edit", async () => new EditAgentModal(this.app, this.plugin, a.name, a.runner, a.model).open());
-      btn(acts, "Open", async () => this.plugin.openNote(`crew/agents/${a.name}/agent.md`));
+        iconBtn(acts, "flash", "Wake this agent now", () => this.plugin.run(["wake", a.name], true));
+        iconBtn(acts, "pause", "Disable this agent", () => this.plugin.run(["agent", "disable", a.name], true));
+      } else iconBtn(acts, "play", "Enable this agent", () => this.plugin.run(["agent", "enable", a.name], true));
+      iconBtn(acts, "edit-pencil", "Edit runner/model", async () => new EditAgentModal(this.app, this.plugin, a.name, a.runner, a.model).open());
+      iconBtn(acts, "arrow-up-right-circle", "Open agent.md", async () => this.plugin.openNote(`crew/agents/${a.name}/agent.md`));
     }
   }
 }
@@ -1117,6 +1119,30 @@ class WranglerSettingTab extends PluginSettingTab {
 // ---------- helpers ----------
 function btn(parent: HTMLElement, text: string, onClick: () => Promise<unknown>, cta = false): HTMLButtonElement {
   const b = parent.createEl("button", { text, cls: cta ? "mod-cta" : "" });
+  b.onclick = async () => {
+    b.disabled = true;
+    try {
+      await onClick();
+    } finally {
+      b.disabled = false;
+    }
+  };
+  return b;
+}
+
+// An icon-only control: the icon says what it looks like, the tooltip (Obsidian's own, via
+// setTooltip) says what it does. aria-label carries the same text for screen readers.
+function iconBtn(
+  parent: HTMLElement,
+  icon: IconName,
+  tooltip: string,
+  onClick: () => Promise<unknown>,
+  cta = false,
+): HTMLButtonElement {
+  const b = parent.createEl("button", { cls: `crew-icon-btn ${cta ? "mod-cta" : ""}` });
+  b.innerHTML = ICONS[icon];
+  b.setAttribute("aria-label", tooltip);
+  setTooltip(b, tooltip);
   b.onclick = async () => {
     b.disabled = true;
     try {

@@ -115,6 +115,26 @@ body {
   }
 }
 
+/* Icon-only controls: agents and server actions. The icon is the label; setTooltip (Obsidian's
+ * own hover tooltip) carries the explanation, so there's no text to make room for. */
+.crew-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--crew-muted);
+}
+.crew-icon-btn:hover { color: var(--crew-fg-strong); }
+.crew-icon-btn.mod-cta svg { color: inherit; }
+.crew-icon-btn svg {
+  width: 15px;
+  height: 15px;
+  color: currentColor;
+  pointer-events: none;
+}
+
 /* ---------- status dot (the signature element) ---------- */
 .crew-dot,
 .crew-dot-mini {
