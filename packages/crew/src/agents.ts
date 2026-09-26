@@ -124,7 +124,11 @@ export function lintAgent(c: Crew, name: string): LintResult {
     if (!r) errors.push(`runner "${def.runner}" isn't defined in crew.md runners.`);
     else if (!Bun.which(r.cmd)) warnings.push(`runner command "${r.cmd}" isn't on PATH on this machine.`);
   }
-  if (!def.can?.length) warnings.push("can is empty, so this agent won't match any task needs.");
+  // An agent with no capabilities is only a problem if it also has no other way to wake: agents
+  // that work via subscribes instead of claiming ready tasks (verifier, planner, scout, watcher)
+  // legitimately have can: [] by design -- that's not the same as being unable to ever do anything.
+  if (!def.can?.length && !def.subscribes?.length)
+    warnings.push("can is empty and subscribes is empty, so this agent won't match any task needs and has no event to wake it either.");
   if (!Array.isArray(def.subscribes)) errors.push("subscribes must be a list.");
   for (const l of def.jobs?.locks ?? [])
     if (!(cfg.locks ?? []).includes(l)) errors.push(`lock "${l}" isn't declared in crew.md locks.`);
