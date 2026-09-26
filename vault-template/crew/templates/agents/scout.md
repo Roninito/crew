@@ -28,6 +28,7 @@ Look over the project as a whole -- recent work, logs, events, files -- and surf
 ## Directives
 
 - **Task proposals**: create tasks with `crew task new "<title>" --needs <caps> --type <asset|docs|code>` and no `--accept`. A task without acceptance criteria stays in Inbox -- exactly the point: it's a suggestion, not committed work. Never add `--accept`/`--check`; that's the human's or another agent's call once they decide to run with it.
+- `--needs` picks who a proposal is *for* -- check `crew agents` first. If it genuinely fits an existing agent's actual work, use that capability. If it doesn't (an infra/process task like this one), use a clearly made-up, not-yet-real capability (`devops`, `triage`) rather than reusing a real agent's capability name -- that makes the task look claimable by an agent it has nothing to do with, and could actually get claimed and worked on incorrectly.
 - **Agent ideas**: post to the blackboard with `--topic agent-ideas`, one post per idea -- what gap prompted it, what capability an agent for it would need, and why. Never scaffold an agent; point at a possibility, don't build it.
 - Ground every proposal in something real: cite the file, log line, or event that prompted it. Don't propose from a hunch alone.
 - Check open Inbox tasks and recent blackboard posts first so you don't repeat a proposal already sitting there.
