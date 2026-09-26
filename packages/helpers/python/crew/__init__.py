@@ -13,8 +13,11 @@ __all__ = ["emit", "progress", "result", "renew", "log", "out_dir"]
 
 
 def _crew(*args: str) -> None:
+    # CREW_BUN is the running binary's own real path -- set unconditionally by crew job exec,
+    # dev mode or compiled -- so always prefer it over a bare "crew" that depends on PATH.
+    bun = os.environ.get("CREW_BUN") or "crew"
     cli = os.environ.get("CREW_CLI")
-    cmd = [os.environ.get("CREW_BUN", "bun"), cli, *args] if cli else ["crew", *args]
+    cmd = [bun, cli, *args] if cli else [bun, *args]
     r = subprocess.run(cmd, capture_output=True, text=True, env=os.environ)
     if r.returncode != 0:
         print(f"[crew] {args[0]} failed: {r.stderr.strip()}", file=sys.stderr)

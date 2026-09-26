@@ -5,9 +5,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 function crew(args: string[]): void {
-  const bun = process.env.CREW_BUN ?? "bun";
+  // CREW_BUN is the running binary's own real path -- set unconditionally by crew job exec,
+  // dev mode or compiled -- so always prefer it over a bare "crew" that depends on PATH.
+  const bun = process.env.CREW_BUN || "crew";
   const cli = process.env.CREW_CLI;
-  const cmd = cli ? [bun, cli, ...args] : ["crew", ...args];
+  const cmd = cli ? [bun, cli, ...args] : [bun, ...args];
   const r = Bun.spawnSync(cmd, { env: process.env, stdout: "pipe", stderr: "pipe" });
   if (r.exitCode !== 0) console.error(`[crew] ${args[0]} failed: ${r.stderr.toString().trim()}`);
 }
