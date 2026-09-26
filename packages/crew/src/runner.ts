@@ -20,7 +20,7 @@ import {
   withMutex,
   writeJson,
 } from "./core";
-import { CLI, jobKill, listJobs, readLocks } from "./jobs";
+import { SELF_ARGS, jobKill, listJobs, readLocks } from "./jobs";
 import { listTasks, releaseTask } from "./tasks";
 
 export type Wake = { reason: string; event?: CrewEvent; task?: string };
@@ -40,10 +40,13 @@ export function launch(c: Crew, agent: string, w: Wake): void {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${agent}-${Date.now()}.json`);
   writeFileSync(file, JSON.stringify(w));
-  const child = spawn(process.execPath, [CLI, "session", agent, file], {
+  const child = spawn(process.execPath, [...SELF_ARGS, "session", agent, file], {
     detached: true,
     stdio: "ignore",
     env: { ...process.env, CREW_VAULT: c.vault },
+  });
+  child.on("error", (e) => {
+    emit(c, { type: "agent.error", by: "crew", agent, data: { reason: `couldn't start session: ${e.message}` } });
   });
   child.unref();
 }
@@ -69,7 +72,7 @@ export function buildPrompt(c: Crew, ag: Agent, w: Wake, taskId: string | null):
   parts.push(
     `You are "${ag.name}", an agent on the crew team in the Obsidian vault at ${c.vault}.`,
     "Use the `crew` CLI for all shared state: tasks, claims, posts, events, jobs, logs. Your identity is already set (CREW_AGENT).",
-    `If \`crew\` isn't on PATH, run it as: "${process.execPath}" "${CLI}" <command>.`,
+    `If \`crew\` isn't on PATH, run it as: "${process.execPath}"${SELF_ARGS[0] ? ` "${SELF_ARGS[0]}"` : ""} <command>.`,
     "Follow the standard workflow in your definition. Never wait inside this session for long work: start a job with `crew job run` and end the session.",
     "",
     "## Why you woke",
@@ -162,7 +165,7 @@ export async function sessionRun(c: Crew, name: string, wakeFile: string): Promi
         CREW_AGENT: name,
         CREW_TASK: taskId ?? "",
         CREW_BUN: process.execPath,
-        CREW_CLI: CLI,
+        CREW_CLI: SELF_ARGS[0] ?? "",
       },
     });
     child.on("error", () => res(127));

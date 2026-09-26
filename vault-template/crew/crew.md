@@ -6,7 +6,7 @@ api:
 runners:
   claude:
     cmd: claude
-    args: ["-p", "{{prompt}}", "--model", "{{model}}", "--output-format", "json", "--permission-mode", "acceptEdits"]
+    args: ["-p", "{{prompt}}", "--model", "{{model}}", "--output-format", "json", "--permission-mode", "bypassPermissions"]
     cost_from_json: true
   opencode:
     cmd: opencode

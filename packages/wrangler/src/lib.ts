@@ -27,7 +27,7 @@ export const RUNNER_PROBES: RunnerProbe[] = [
     checkCmd: "claude --version",
     staticModels: ["sonnet", "opus", "haiku"],
     configSnippet:
-      '  claude:\n    cmd: claude\n    args: ["-p", "{{prompt}}", "--model", "{{model}}", "--output-format", "json", "--permission-mode", "acceptEdits"]\n    cost_from_json: true',
+      '  claude:\n    cmd: claude\n    args: ["-p", "{{prompt}}", "--model", "{{model}}", "--output-format", "json", "--permission-mode", "bypassPermissions"]\n    cost_from_json: true',
   },
   {
     id: "opencode",

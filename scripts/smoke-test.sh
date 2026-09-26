@@ -3,6 +3,7 @@
 # Usage: scripts/smoke-test.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+(cd "$ROOT/packages/crew" && bun run gen-helpers) >/dev/null
 TMP="$(mktemp -d)"
 VAULT="$TMP/TestVault"
 export CREW_VAULT="$VAULT"
@@ -112,5 +113,36 @@ done
 # Kill switch.
 "${CREW[@]}" stop --all >/dev/null && "${CREW[@]}" status | grep -q PAUSED && pass "kill switch pauses the crew"
 "${CREW[@]}" resume >/dev/null && pass "resume"
+
+# Compiled-binary self-respawn check. `crew wake` and `crew job run` both re-invoke the running
+# binary as a detached child (crew session / crew job exec). A `bun build --compile` binary gets a
+# different argv shape than `bun bin/crew.ts` -- Bun injects its own ["bun", "<virtual bunfs
+# path>"] pair ahead of real args -- and this silently broke both paths once already: passing an
+# extra leading argument shifted every real argument over by one, so the subcommand was never
+# dispatched, with no error anywhere (these run detached with stdio ignored). Every check above
+# uses `bun bin/crew.ts` directly and would never catch that regression, since dev mode doesn't
+# have this argv shape at all.
+kill "$SERVER_PID" 2>/dev/null || true
+SERVER_PID=""
+sleep 0.3
+COMPILED="$TMP/crew-compiled"
+(cd "$ROOT/packages/crew" && bun build --compile ./bin/crew.ts --outfile "$COMPILED") >/dev/null 2>&1
+"$COMPILED" serve >"$TMP/compiled-server.log" 2>&1 &
+SERVER_PID=$!
+for i in $(seq 1 20); do curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && break; sleep 0.25; done
+curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && pass "compiled binary: server starts and serves /health"
+
+"$COMPILED" wake tester --reason "compiled-wake-check" >/dev/null
+for i in $(seq 1 20); do grep -q "compiled-wake-check" "$VAULT/crew/events/"*.jsonl && break; sleep 0.25; done
+grep -q '"session.started".*compiled-wake-check' "$VAULT/crew/events/"*.jsonl \
+  && pass "compiled binary: crew wake actually dispatches a session" \
+  || { cat "$TMP/compiled-server.log"; fail "compiled binary: wake produced no session -- the exact self-respawn regression this guards"; }
+
+JOUT="$("$COMPILED" job run --as tester --task T-0002 --script "$VAULT/crew/templates/scripts/example-job.py" --timeout 1m)"
+JID="$(echo "$JOUT" | grep -o 'J-[0-9]*' | head -1)"
+for i in $(seq 1 20); do "$COMPILED" jobs | grep "$JID" | grep -q succeeded && break; sleep 0.5; done
+"$COMPILED" jobs | grep "$JID" | grep -q succeeded \
+  && pass "compiled binary: crew job run actually dispatches and completes" \
+  || { cat "$TMP/compiled-server.log"; fail "compiled binary: $JID never completed -- the exact self-respawn regression this guards"; }
 
 echo "All smoke tests passed."

@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute } from "node:path";
 import { getAgent } from "./agents";
+import { HELPER_ASSETS } from "./helpers-embedded.generated";
 import {
   type Args,
   type Crew,
@@ -30,7 +31,33 @@ import {
 } from "./core";
 
 export const CLI = resolve(process.argv[1] ?? "");
-export const HELPERS = resolve(dirname(CLI), "..", "..", "helpers");
+// A `bun build --compile` binary gets a different argv shape than `bun bin/crew.ts`: Bun injects
+// its own ["bun", "<virtual bunfs path>"] pair ahead of real args, so CLI above resolves to a
+// virtual path under Bun's own embedded filesystem in that case -- NOT a real file, though
+// existsSync() says otherwise: Bun's fs functions recognize /$bunfs/ paths as "existing" because
+// that's how a compiled binary reads its own embedded assets, so existsSync can't be used to tell
+// the two cases apart. The literal /$bunfs/ prefix is the reliable signal instead. Getting this
+// wrong means passing CLI as a leading arg when we respawn ourselves (crew session, crew job exec)
+// shifts every real argument over by one, so the subcommand is never dispatched -- silently, since
+// these run detached with stdio ignored. Compiled: omit it entirely (direct invocation). Dev mode:
+// CLI is a real file bun needs the path to.
+export const SELF_ARGS: string[] = (process.argv[1] ?? "").startsWith("/$bunfs/") ? [] : [CLI];
+
+// Job scripts import their helper via CREW_HELPERS/bun/crew.ts or PYTHONPATH pointing at
+// CREW_HELPERS/python -- a real path is needed either way, and a compiled binary has no sibling
+// files on disk to derive one from (see SELF_ARGS above; same root cause). Materializing the
+// embedded helper content into the vault's own .state/ sidesteps path derivation entirely: it
+// works identically in dev and compiled mode, and only writes files that are missing.
+function ensureHelpers(c: Crew): string {
+  const dir = c.p(".state", "helpers");
+  for (const [rel, content] of Object.entries(HELPER_ASSETS)) {
+    const dest = join(dir, rel);
+    if (existsSync(dest)) continue;
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, content);
+  }
+  return dir;
+}
 
 export type Job = {
   id: string;
@@ -146,7 +173,7 @@ export function jobRun(c: Crew, a: Args, o: Out): void {
   saveJob(c, j, { data: {}, body: `\n# ${id}${task ? ` for [[${task}]]` : ""}\n\n${note}\n` });
   emit(c, { type: "job.queued", by: agent, agent, task: task ?? undefined, data: { job: id, script, lock } });
   agentLog(c, agent, `started job ${id} (${script.split("/").pop()})`, task);
-  const child = spawn(process.execPath, [CLI, "job", "exec", id], {
+  const child = spawn(process.execPath, [...SELF_ARGS, "job", "exec", id], {
     detached: true,
     stdio: "ignore",
     env: { ...process.env, CREW_VAULT: c.vault },
@@ -210,6 +237,7 @@ export async function jobExec(c: Crew, id: string): Promise<void> {
   const logPath = join(dir, "run.log");
   emit(c, { type: "job.started", by: "crew", agent: j.agent, task: j.task ?? undefined, data: { job: id } });
   const fd = openSync(logPath, "a");
+  const HELPERS = ensureHelpers(c);
   const py = join(HELPERS, "python");
   const env = {
     ...process.env,
@@ -220,7 +248,7 @@ export async function jobExec(c: Crew, id: string): Promise<void> {
     CREW_JOB_DIR: dir,
     CREW_JOB_OUT: join(dir, "out"),
     CREW_BUN: process.execPath,
-    CREW_CLI: CLI,
+    CREW_CLI: SELF_ARGS[0] ?? "",
     CREW_HELPERS: HELPERS,
     PYTHONPATH: process.env.PYTHONPATH ? `${py}:${process.env.PYTHONPATH}` : py,
   };
