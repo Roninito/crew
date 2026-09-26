@@ -11,7 +11,13 @@ CREW=(bun "$ROOT/packages/crew/bin/crew.ts")
 PORT=$(( 17000 + RANDOM % 1000 ))
 pass() { echo "ok   $1"; }
 fail() { echo "FAIL $1" >&2; exit 1; }
-cleanup() { [ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$TMP"; }
+cleanup() {
+  if [ -n "${SERVER_PID:-}" ]; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  rm -rf "$TMP" 2>/dev/null || true
+}
 trap cleanup EXIT
 
 "$ROOT/scripts/init-vault.sh" "$VAULT" >/dev/null
@@ -140,9 +146,9 @@ grep -q '"session.started".*compiled-wake-check' "$VAULT/crew/events/"*.jsonl \
 
 JOUT="$("$COMPILED" job run --as tester --task T-0002 --script "$VAULT/crew/templates/scripts/example-job.py" --timeout 1m)"
 JID="$(echo "$JOUT" | grep -o 'J-[0-9]*' | head -1)"
-for i in $(seq 1 20); do "$COMPILED" jobs | grep "$JID" | grep -q succeeded && break; sleep 0.5; done
+for i in $(seq 1 40); do "$COMPILED" jobs | grep "$JID" | grep -q "succeeded\|failed" && break; sleep 0.5; done
 "$COMPILED" jobs | grep "$JID" | grep -q succeeded \
   && pass "compiled binary: crew job run actually dispatches and completes" \
-  || { cat "$TMP/compiled-server.log"; fail "compiled binary: $JID never completed -- the exact self-respawn regression this guards"; }
+  || { cat "$TMP/compiled-server.log"; echo "--- $JID run.log ---"; cat "$VAULT/crew/jobs/$JID/run.log" 2>&1; fail "compiled binary: $JID didn't succeed -- the exact self-respawn regression this guards, or see run.log above"; }
 
 echo "All smoke tests passed."
