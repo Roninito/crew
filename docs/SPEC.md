@@ -119,7 +119,10 @@ wiki: [conventions/assets, conventions/naming]   # pages to read before working
 
 ## Creating agents
 
-**Every vault ships with one agent already enabled: `verifier`.** Verification isn't domain-specific the way a worker is, so unlike blender/blogger/bridge-style agents, `crew/agents/verifier/` comes pre-filled (no `{{BLANK: ...}}` markers) and pre-enabled -- runner `claude`, model `opus` (deliberately different from a typical worker's `sonnet`), `subscribes: [task.verify]`, no `can` (it doesn't claim tasks). Without it, tasks reach `verify` and sit there forever: nothing is listening for `task.verify` to run `crew audit` and call `crew verdict`. Human review only replaces this for an escalated or sampled task, not the first pass.
+**Every vault ships with three agents already scaffolded, generic enough to need no per-vault customization: `verifier` (enabled), `planner` and `scout` (both disabled).** All three come pre-filled -- no `{{BLANK: ...}}` markers -- unlike blender/blogger/bridge-style agents, which are genuinely project-specific.
+
+- `verifier` is enabled by default because nothing else is generic and mandatory the way it is: without it, tasks reach `verify` and sit there forever, since nothing is listening for `task.verify` to run `crew audit` and call `crew verdict`. Human review only replaces this for an escalated or sampled task, not the first pass. Runner `claude`, model `opus` (deliberately different from a typical worker's `sonnet`), `subscribes: [task.verify]`, no `can` (it doesn't claim tasks).
+- `planner` and `scout` ship disabled -- useful, but not everyone wants a second agent proposing or organizing work from day one, and both cost real spend once enabled. `planner` wakes on `planner.request` with a goal to break into tasks; `scout` wakes on a schedule (ships set to `"0 8 * * *"`, daily -- change to `"0 8 * * 1"` for weekly, or any cron that fits) and surveys recent events, logs and files to propose tasks (to Inbox, without acceptance criteria, so nothing runs without a human or another agent picking it up) and post agent ideas to the blackboard under `agent-ideas`, never scaffolding them itself. `crew agent enable planner` / `scout` turns either on; check `crew agents` before scaffolding a fresh one of either from templates, since one already exists.
 
 Everything else is scaffolded from templates, then filled in by the human or their copilot. The copilot can design a new agent in the middle of a conversation and have it running minutes later.
 
@@ -138,7 +141,7 @@ crew agent enable blender
 
 The crew-manager skill includes `new-agent.sh`, a wrapper the copilot calls with the same arguments.
 
-**Starter templates:** worker (does tasks from the board), bridge (connects to an outside app such as Unity or Blender), verifier, planner (breaks goals into tasks with acceptance criteria), watcher (reads logs and flags problems).
+**Starter templates:** worker (does tasks from the board), bridge (connects to an outside app such as Unity or Blender), verifier, planner (breaks goals into tasks with acceptance criteria, on request), watcher (reads logs and flags problems crew already detected, reactive), scout (schedule-driven: surveys the project and proposes tasks -- to Inbox, without acceptance criteria, so nothing runs without a human or another agent picking it up -- and posts agent ideas to the blackboard under `agent-ideas`, never scaffolding them itself). Opt-in like any other template; only `verifier` is pre-enabled by default.
 
 ## Tasks and the board
 

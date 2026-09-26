@@ -70,8 +70,10 @@ Look for problems humans miss when switching tasks: results that contradict othe
 
 ### Design a new agent
 
+Every vault already has `verifier` (enabled), `planner` and `scout` (both disabled), pre-configured -- check `crew agents` before scaffolding another one of these. A task stuck in `verify` is a sign verifier just needs its `--task` woken (`crew wake verifier --task <id>`), not a new agent. Want a goal broken into tasks or the project surveyed for proposals? `crew agent enable planner` / `scout` rather than scaffolding a fresh one.
+
 1. Agree the agent's job with the human in one sentence, plus its capabilities, runner and model.
-2. Scaffold it: `bash crew/skills/crew-manager/scripts/new-agent.sh <name> <template> <runner> <model> <caps>`. Templates: worker, bridge, verifier, planner, watcher.
+2. Scaffold it: `bash crew/skills/crew-manager/scripts/new-agent.sh <name> <template> <runner> <model> <caps>`. Templates: worker, bridge, verifier, planner, watcher, scout.
 3. Open `crew/agents/<name>/agent.md` and replace every `{{BLANK: ...}}` marker. Write directives as short imperative rules. Keep the standard workflow section.
 4. Run `crew agent lint <name>` and fix every error.
 5. Show the human the finished agent.md, then run `crew agent enable <name>`.

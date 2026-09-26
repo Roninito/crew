@@ -881,7 +881,7 @@ class NewAgentModal extends Modal {
     const v = { name: "", template: "worker", runner: "dryrun", model: "", can: "" };
     new Setting(this.contentEl).setName("Name").setDesc("Lowercase, digits and dashes").addText((t) => t.onChange((x) => (v.name = x)));
     new Setting(this.contentEl).setName("Template").addDropdown((d) =>
-      d.addOptions({ worker: "Worker", bridge: "Bridge", verifier: "Verifier", planner: "Planner", watcher: "Watcher" }).setValue("worker").onChange((x) => (v.template = x)),
+      d.addOptions({ worker: "Worker", bridge: "Bridge", verifier: "Verifier", planner: "Planner", watcher: "Watcher", scout: "Scout" }).setValue("worker").onChange((x) => (v.template = x)),
     );
 
     const runnerSetting = new Setting(this.contentEl).setName("Runner").setDesc("Detecting installed AI tools...");
