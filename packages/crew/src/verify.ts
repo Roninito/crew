@@ -8,11 +8,14 @@ import {
   type Out,
   actorOf,
   agentLog,
+  basename,
+  dirname,
   emit,
   flag,
   join,
   readEvents,
   readJson,
+  resolve,
   stamp,
   tail,
   withMutex,
@@ -64,9 +67,19 @@ function applyApproval(c: Crew, t: Task): string {
     return `merged crew/${t.id} into ${r}`;
   }
   if (t.target) {
-    const dest = c.expand(t.target);
-    cpSync(t.worktree, dest, { recursive: true });
-    return `copied work tree to ${dest}`;
+    // resolve() anchors to the vault root regardless of the crew process's own cwd -- expand()
+    // alone only substitutes ${VAR} placeholders, so a plain relative target like "Blog.md"
+    // would otherwise land wherever the process happened to be running from (unpredictable when
+    // approval runs through a long-lived server rather than a terminal already cd'd into the
+    // vault). Copying the specific file/dir named by target's basename, not the whole work tree,
+    // matters just as much: target is one file (or one folder of produced assets), and the work
+    // tree is a staging area that can hold notes, scratch files, or job output alongside it.
+    const dest = resolve(c.vault, c.expand(t.target));
+    const src = join(t.worktree, basename(t.target));
+    if (!existsSync(src)) throw new CrewError(`Work tree has no ${basename(t.target)} -- nothing to copy to ${t.target}.`);
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(src, dest, { recursive: true });
+    return `copied ${basename(t.target)} to ${dest}`;
   }
   return "approved in place (no target set)";
 }

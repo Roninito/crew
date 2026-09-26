@@ -66,8 +66,9 @@ export function agentsCmd(c: Crew, o: Out): void {
 
 export function agentNew(c: Crew, a: Args, o: Out): void {
   const name = a._[2];
-  if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name))
-    throw new CrewError("Usage: crew agent new <name> --template worker --runner claude --model sonnet --can a,b (name: lowercase, digits, dashes)");
+  if (!name) throw new CrewError("Usage: crew agent new <name> --template <name> --runner <name> --model <name> --can a,b");
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name))
+    throw new CrewError(`Bad agent name "${name}": must start with a lowercase letter or digit, and contain only lowercase letters, digits and dashes -- no capitals, spaces or underscores.`);
   if (name === "human") throw new CrewError('"human" is reserved.');
   const dir = c.p("agents", name);
   if (existsSync(join(dir, "agent.md"))) throw new CrewError(`Agent ${name} already exists.`);

@@ -119,7 +119,9 @@ wiki: [conventions/assets, conventions/naming]   # pages to read before working
 
 ## Creating agents
 
-Agents are scaffolded from templates, then filled in by the human or their copilot. The copilot can design a new agent in the middle of a conversation and have it running minutes later.
+**Every vault ships with one agent already enabled: `verifier`.** Verification isn't domain-specific the way a worker is, so unlike blender/blogger/bridge-style agents, `crew/agents/verifier/` comes pre-filled (no `{{BLANK: ...}}` markers) and pre-enabled -- runner `claude`, model `opus` (deliberately different from a typical worker's `sonnet`), `subscribes: [task.verify]`, no `can` (it doesn't claim tasks). Without it, tasks reach `verify` and sit there forever: nothing is listening for `task.verify` to run `crew audit` and call `crew verdict`. Human review only replaces this for an escalated or sampled task, not the first pass.
+
+Everything else is scaffolded from templates, then filled in by the human or their copilot. The copilot can design a new agent in the middle of a conversation and have it running minutes later.
 
 ```
 crew agent new blender --template worker --runner claude --model sonnet --can blender,mesh,rig
@@ -227,7 +229,7 @@ result(files=["crate_v2.glb"], tris=1840)    # written to result.json
 
 Agents never ask permission to act. Their work is isolated until approved, a verifier agent approves most of it, and the human sees only what it escalates.
 
-**Work trees.** Every claimed task gets an isolated space: a git worktree on its own branch for code, or a staging folder for assets. Nothing reaches the main branch or the live project folder until approved, and then crew merges or copies it in.
+**Work trees.** Every claimed task gets an isolated space: a git worktree on its own branch for code, or a staging folder for assets. Nothing reaches the main branch or the live project folder until approved, and then crew merges or copies it in. For a task with `--target` (a specific existing file the task updates, like an append-only log), claiming it seeds the staging folder with a copy of the current target -- so a worker can see and preserve what's already there -- and approval copies back only that file, named by the target's own basename, never the whole staging folder onto it.
 
 **The verifier agent** listens for `task.verify`, ideally on a different model from the worker. For each task it runs the automated checks named in the acceptance criteria, compares the result against each acceptance line with evidence, checks consistency with the wiki and related tasks, and writes a verdict: approve, reject with reasons, or escalate. The approve-or-escalate call can go to the `decider` (Jev or the local decider).
 

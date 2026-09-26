@@ -1,6 +1,6 @@
 // Tasks: one note per task. The board is a view over these notes.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import {
   type Args,
   type Crew,
@@ -9,6 +9,7 @@ import {
   type Out,
   actorOf,
   agentLog,
+  basename,
   emit,
   flag,
   flags,
@@ -17,6 +18,7 @@ import {
   list,
   nextId,
   readMd,
+  resolve,
   stamp,
   writeMd,
 } from "./core";
@@ -196,7 +198,16 @@ export function ensureWorktree(c: Crew, t: Task): string {
         encoding: "utf8",
       });
       if (r.status !== 0) throw new CrewError(`git worktree failed: ${r.stderr.trim()}`);
-    } else mkdirSync(dir, { recursive: true });
+    } else {
+      mkdirSync(dir, { recursive: true });
+      // Seed the staging area with whatever's already at target, so a worker editing an existing
+      // file (like an append-only log) can see and preserve what's there instead of unknowingly
+      // starting from nothing -- and so approval's copy-back doesn't wipe out prior content.
+      if (t.target) {
+        const existing = resolve(c.vault, c.expand(t.target));
+        if (existsSync(existing)) cpSync(existing, join(dir, basename(t.target)), { recursive: true });
+      }
+    }
   }
   mkdirSync(c.p("worktrees"), { recursive: true });
   writeFileSync(

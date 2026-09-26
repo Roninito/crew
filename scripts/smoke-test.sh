@@ -27,6 +27,17 @@ TOKEN="$(sed -n 's/^  token: "\(.*\)"/\1/p' "$VAULT/crew/crew.md")"
 
 "${CREW[@]}" status >/dev/null && pass "status"
 
+# Agent name validation: distinct, non-misleading errors for missing vs. malformed names -- the
+# old message hardcoded "--runner claude --model sonnet" as its usage example regardless of what
+# the user actually chose, which read as "your runner got reverted to claude" when the real
+# problem was the name (e.g. a capital letter).
+"${CREW[@]}" agent new >/dev/null 2>&1 && fail "agent new should require a name" || pass "missing name gives a usage error"
+if OUT="$("${CREW[@]}" agent new Bad_Name --template worker --runner dryrun --model none --can demo 2>&1)"; then
+  fail "agent new should reject a capitalized/underscored name"
+else
+  echo "$OUT" | grep -q "Bad_Name" && ! echo "$OUT" | grep -q "runner claude" && pass "malformed name error names the bad value, not an unrelated runner/model example" || fail "malformed-name error text: $OUT"
+fi
+
 # Agent scaffolding: lint must fail on blanks, pass once filled.
 "${CREW[@]}" agent new tester --template worker --runner dryrun --model none --can demo >/dev/null
 if "${CREW[@]}" agent lint tester >/dev/null; then fail "lint should fail with blanks"; else pass "lint catches blanks"; fi
@@ -76,6 +87,21 @@ if "${CREW[@]}" verdict T-0002 approve --as tester >/dev/null 2>&1; then fail "s
 "${CREW[@]}" verdict T-0002 approve --as verifier --reason "file present" | grep -q escalated && pass "unearned type escalates to human"
 "${CREW[@]}" verdict T-0002 approve >/dev/null && "${CREW[@]}" task list --status done | grep -q T-0002 && pass "human approval completes task"
 "${CREW[@]}" trace T-0002 >/dev/null && grep -q "job.succeeded" "$VAULT/crew/traces/T-0002.md" && pass "trace written"
+
+# A non-code task's --target names one file, not the whole staging folder: claiming it must seed
+# the work tree with a copy of whatever's already there (so an append-only file can be read and
+# preserved, not silently started from nothing), and approval must copy that one file back --
+# never the whole work tree onto it, which turns a file target into a directory.
+printf '## existing entry\nkeep me\n' > "$VAULT/Blog.md"
+"${CREW[@]}" task new "blog update" --needs demo --type docs --target Blog.md --accept "x" --check "true" >/dev/null
+"${CREW[@]}" claim T-0003 --as tester >/dev/null
+WT3="$("${CREW[@]}" task show T-0003 --json | grep -o '"worktree": "[^"]*"' | cut -d'"' -f4)"
+grep -q "keep me" "$WT3/Blog.md" && pass "claiming seeds the work tree with the existing target file" || fail "work tree wasn't seeded with Blog.md"
+printf '\n## new entry\nadded by tester\n' >> "$WT3/Blog.md"
+"${CREW[@]}" task update T-0003 --status verify --as tester --note "done" >/dev/null
+"${CREW[@]}" verdict T-0003 approve >/dev/null
+[ -f "$VAULT/Blog.md" ] && [ ! -d "$VAULT/Blog.md" ] && pass "approval copies the target file back as a file, not a directory" || fail "Blog.md is a directory after approval"
+grep -q "keep me" "$VAULT/Blog.md" && grep -q "added by tester" "$VAULT/Blog.md" && pass "approval preserves prior content and adds the new entry" || fail "Blog.md is missing prior or new content"
 
 # Server: API, auth, and event-driven wakes.
 bun "$ROOT/packages/crew/bin/crew.ts" serve >"$TMP/server.log" 2>&1 &
