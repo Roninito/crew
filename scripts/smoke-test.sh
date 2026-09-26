@@ -28,6 +28,16 @@ perl -0pi -e 's/\{\{BLANK:.*?\}\}/filled/gs' "$A"
 "${CREW[@]}" agent lint tester >/dev/null && pass "lint passes after filling"
 "${CREW[@]}" agent enable tester >/dev/null && pass "agent enabled"
 
+# Agent removal: refused while enabled, deletes the folder once disabled.
+"${CREW[@]}" agent new scratch --template worker --runner dryrun --model none --can demo >/dev/null
+perl -0pi -e 's/\{\{BLANK:.*?\}\}/filled/gs' "$VAULT/crew/agents/scratch/agent.md"
+"${CREW[@]}" agent enable scratch >/dev/null
+if "${CREW[@]}" agent remove scratch >/dev/null 2>&1; then fail "remove should refuse an enabled agent"; else pass "remove refuses an enabled agent"; fi
+"${CREW[@]}" agent disable scratch >/dev/null
+"${CREW[@]}" agent remove scratch >/dev/null && pass "remove deletes a disabled agent"
+[ ! -d "$VAULT/crew/agents/scratch" ] && pass "removed agent's folder is gone" || fail "scratch folder still exists"
+"${CREW[@]}" agent lint scratch >/dev/null 2>&1 && fail "lint should fail for a removed agent" || pass "removed agent no longer resolves"
+
 # Task lifecycle with a Python job.
 "${CREW[@]}" task new "Inbox task" >/dev/null
 "${CREW[@]}" task list --status inbox | grep -q T-0001 && pass "task without criteria stays in inbox"

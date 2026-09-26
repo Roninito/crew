@@ -83,7 +83,7 @@ interface DetectedRunner {
   configSnippet: string;
 }
 
-function runCapture(cmd: string, timeoutMs = 5000): Promise<{ code: number; out: string }> {
+function runCapture(cmd: string, timeoutMs = 5000): Promise<{ code: number; out: string; stdout: string }> {
   return new Promise((resolve) => {
     const isWin = process.platform === "win32";
     // Obsidian is launched by the GUI (Dock/Spotlight/launchd), not from a terminal, so it starts
@@ -94,14 +94,19 @@ function runCapture(cmd: string, timeoutMs = 5000): Promise<{ code: number; out:
       ? spawn("cmd.exe", ["/d", "/c", cmd], { windowsHide: true })
       : spawn(process.env.SHELL || "/bin/zsh", ["-ilc", cmd]);
     let out = "";
+    let stdout = "";
     let done = false;
     const finish = (code: number) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      resolve({ code, out });
+      resolve({ code, out, stdout });
     };
-    child.stdout?.on("data", (d) => (out += String(d)));
+    child.stdout?.on("data", (d) => {
+      const s = String(d);
+      out += s;
+      stdout += s;
+    });
     child.stderr?.on("data", (d) => (out += String(d)));
     child.on("close", (code) => finish(code ?? 1));
     child.on("error", () => finish(1));
@@ -114,6 +119,19 @@ function runCapture(cmd: string, timeoutMs = 5000): Promise<{ code: number; out:
       finish(1);
     }, timeoutMs);
   });
+}
+
+/**
+ * Obsidian (and anything it spawns, including the crew server) starts with launchd's minimal PATH,
+ * not the user's normal login PATH -- so a runner CLI installed via Homebrew, nvm, or a per-user
+ * bin dir looks "missing" even when it's on the user's own PATH. Resolve the real one once via the
+ * user's shell so the crew server -- and everything it in turn spawns -- can find those CLIs.
+ */
+async function resolveLoginPath(): Promise<string | null> {
+  if (process.platform === "win32") return null;
+  const res = await runCapture(`printf '%s' "$PATH"`);
+  const p = res.stdout.trim();
+  return res.code === 0 && p ? p : null;
 }
 
 async function detectRunners(): Promise<DetectedRunner[]> {
@@ -331,6 +349,17 @@ export default class WranglerPlugin extends Plugin {
           : content;
       await adapter.write(target, filled);
     }
+    // Also give a Copilot-style skills folder the crew-manager skill, if this vault already has one,
+    // so that copilot can run the team without waiting on crew/skills/crew-manager to be pointed at.
+    if (await adapter.exists(".copilot/skills")) {
+      for (const [rel, content] of Object.entries(VAULT_ASSETS)) {
+        if (!rel.startsWith("skills/crew-manager/")) continue;
+        const target = rel.replace(/^skills\//, ".copilot/skills/");
+        if (await adapter.exists(target)) continue;
+        await adapter.mkdir(target.slice(0, target.lastIndexOf("/")));
+        await adapter.write(target, content);
+      }
+    }
     try {
       mkdirSync(assetsDir, { recursive: true });
     } catch {
@@ -393,10 +422,13 @@ export default class WranglerPlugin extends Plugin {
       cmd = bin;
       args = ["serve", "--vault", this.vaultPath()];
     }
+    const loginPath = await resolveLoginPath();
+    const env = { ...process.env };
+    if (loginPath) env.PATH = loginPath;
     try {
       this.child = spawn(cmd, args, {
         stdio: "ignore",
-        env: { ...process.env },
+        env,
       });
       this.child.on("exit", () => {
         this.child = null;

@@ -132,6 +132,8 @@ crew agent enable blender
 3. `crew agent lint` checks the frontmatter schema, runner and model availability, that no blanks remain, and that subscribed events and locks exist. A new agent stays disabled until lint passes. This is a completeness check, not a trust gate.
 4. `crew agent enable` turns it on and posts `agent.created` to the blackboard.
 
+`crew agent remove <name>` deletes an agent's folder for good. It refuses while the agent is enabled -- `crew agent disable` first -- and doesn't touch tasks the agent claimed; reassign or reclaim those separately.
+
 The crew-manager skill includes `new-agent.sh`, a wrapper the copilot calls with the same arguments.
 
 **Starter templates:** worker (does tasks from the board), bridge (connects to an outside app such as Unity or Blender), verifier, planner (breaks goals into tasks with acceptance criteria), watcher (reads logs and flags problems).

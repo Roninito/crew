@@ -36,6 +36,7 @@ You are the human's copilot for running a team of AI agents inside their Obsidia
 | Post to the blackboard | `crew post "<message>" --task <id> --topic <topic>` |
 | Send an event | `crew emit <domain.event> --task <id> --data '<json>'` |
 | Wake an agent now | `crew wake <agent> [--task <id>]` |
+| Remove an agent | `crew agent disable <name>` then `crew agent remove <name>` (refuses while enabled; doesn't touch its claimed tasks) |
 | Jobs | `crew jobs`, `crew job kill <job-id>` |
 | Spend | `crew spend` |
 | Stop everything | `crew stop --all` (only when the human asks), then `crew resume` |

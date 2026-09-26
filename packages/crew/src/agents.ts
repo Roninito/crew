@@ -1,5 +1,5 @@
 // Agents: scaffold from templates, lint, enable/disable, list.
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
   type Args,
   type Crew,
@@ -166,4 +166,14 @@ export function agentEnable(c: Crew, a: Args, o: Out, on: boolean): void {
   setEnabled(c, name, on);
   emit(c, { type: on ? "agent.enabled" : "agent.disabled", by: actorOf(a), agent: name });
   o.say(`${name} ${on ? "enabled" : "disabled"}.`);
+}
+
+export function agentRemove(c: Crew, a: Args, o: Out): void {
+  const name = a._[2];
+  if (!name) throw new CrewError("Usage: crew agent remove <name>");
+  const ag = getAgent(c, name);
+  if (ag.def.enabled) throw new CrewError(`${name} is enabled. Run "crew agent disable ${name}" first, then remove it.`);
+  rmSync(ag.dir, { recursive: true, force: true });
+  emit(c, { type: "agent.removed", by: actorOf(a), agent: name });
+  o.say(`Removed ${name}. Tasks previously claimed by it are untouched -- reassign or reclaim them separately.`);
 }

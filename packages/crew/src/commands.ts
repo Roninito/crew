@@ -1,5 +1,5 @@
 // Command router. The CLI and the HTTP API both call run(), so behavior is identical everywhere.
-import { agentEnable, agentLint, agentNew, agentsCmd } from "./agents";
+import { agentEnable, agentLint, agentNew, agentRemove, agentsCmd } from "./agents";
 import { emitCmd, eventsCmd, logCmd, logs, post, spendCmd } from "./comms";
 import { type Crew, CrewError, Out, flag, parseArgs, withMutex } from "./core";
 import { jobKill, jobRun, jobsCmd } from "./jobs";
@@ -17,6 +17,7 @@ Team
   agent new <name> --template worker --runner claude --model sonnet --can a,b
   agent lint <name>                        Check an agent definition (blanks, runner, locks)
   agent enable|disable <name>
+  agent remove <name>                      Delete a disabled agent's folder
   wake <agent> [--task id] [--reason text] Start a session now
 
 Tasks
@@ -48,7 +49,7 @@ Control
 `;
 
 // Commands that change shared state run under the cross-process mutex.
-const MUTATING = new Set(["task.new", "task.update", "claim", "release", "renew", "post", "emit", "log", "agent.new", "agent.enable", "agent.disable", "verdict", "job.run", "spend", "resume"]);
+const MUTATING = new Set(["task.new", "task.update", "claim", "release", "renew", "post", "emit", "log", "agent.new", "agent.enable", "agent.disable", "agent.remove", "verdict", "job.run", "spend", "resume"]);
 
 export async function run(c: Crew, argv: string[]): Promise<Out> {
   const a = parseArgs(argv);
@@ -69,6 +70,8 @@ export async function run(c: Crew, argv: string[]): Promise<Out> {
         return agentEnable(c, a, o, true);
       case "agent.disable":
         return agentEnable(c, a, o, false);
+      case "agent.remove":
+        return agentRemove(c, a, o);
       case "wake":
         return wakeCmd(c, a, o);
       case "task.new":
