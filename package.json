@@ -1,0 +1,10 @@
+{
+  "name": "crew",
+  "private": true,
+  "scripts": {
+    "install:all": "bash scripts/install.sh",
+    "typecheck": "cd packages/crew && bunx tsc --noEmit && cd ../wrangler && bun run typecheck",
+    "build:wrangler": "cd packages/wrangler && bun run build",
+    "smoke": "bash scripts/smoke-test.sh"
+  }
+}

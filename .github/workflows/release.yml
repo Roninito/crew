@@ -1,0 +1,24 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bash scripts/build-release.sh
+      - run: |
+          mkdir -p release
+          cp dist/crew-darwin-arm64 dist/crew-darwin-x64 dist/crew-linux-arm64 dist/crew-linux-x64 dist/crew-windows-x64.exe release/
+          cp dist/wrangler.zip release/
+          cp packages/wrangler/main.js packages/wrangler/manifest.json packages/wrangler/styles.css release/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

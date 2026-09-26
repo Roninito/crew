@@ -1,0 +1,225 @@
+// crew serve: wakes subscribed agents on events, runs schedules, sweeps expired claims and lost jobs,
+// flags anomalies, and exposes the HTTP API and live stream that Wrangler (and other tools) use.
+import { existsSync, openSync, readSync, closeSync, rmSync, statSync } from "node:fs";
+import type { ServerWebSocket } from "bun";
+import { type Agent, listAgents } from "./agents";
+import { run } from "./commands";
+import { type Crew, type CrewEvent, emit, eventFiles, parseEvents, pidAlive, readEvents, readMd, withMutex, writeJson } from "./core";
+import { cronMatches } from "./cron";
+import { listJobs, loadJob, releaseLocksFor, saveJob } from "./jobs";
+import { type Wake, activeSessions, isPaused, launch, statusData } from "./runner";
+import { listTasks, releaseTask } from "./tasks";
+
+function subscribed(ag: Agent, type: string): boolean {
+  return (ag.def.subscribes ?? []).some(
+    (p) => p === "*" || p === type || (p.endsWith(".*") && type.startsWith(p.slice(0, -1))),
+  );
+}
+
+function shouldWake(c: Crew, ag: Agent, ev: CrewEvent): boolean {
+  if (!ag.def.enabled || !subscribed(ag, ev.type)) return false;
+  if (ev.type.startsWith("job.") || ev.type.startsWith("review.")) return ev.agent === ag.name;
+  if (ev.by === ag.name) return false;
+  if (ev.type === "task.ready" || ev.type === "task.created") {
+    const needs =
+      (ev.data?.needs as string[] | undefined) ?? listTasks(c).find((t) => t.id === ev.task)?.needs ?? [];
+    const can = ag.def.can ?? [];
+    return needs.every((n) => can.includes(n));
+  }
+  if (ev.type === "task.verify" && ev.agent === ag.name) return false; // never verify your own work
+  return true;
+}
+
+export async function serve(c: Crew): Promise<void> {
+  const cfg = c.config();
+  const port = cfg.api?.port ?? 7717;
+  const token = cfg.api?.token ?? "";
+  const clients = new Set<ServerWebSocket<unknown>>();
+  const queue = new Map<string, Wake[]>();
+  const launching = new Map<string, number>();
+  const offsets = new Map<string, number>();
+  const failures = new Map<string, number>();
+  const expiries = new Map<string, number>();
+  let lastMinute = -1;
+
+  for (const f of eventFiles(c)) offsets.set(f, statSync(f).size); // don't replay history
+
+  const enqueue = (agent: string, w: Wake) => {
+    const q = queue.get(agent) ?? [];
+    if (q.length < 20) q.push(w);
+    queue.set(agent, q);
+  };
+
+  const anomaly = (kind: string, ev: CrewEvent, detail: string) => {
+    if (cfg.anomalies?.enabled === false) return;
+    emit(c, { type: "crew.anomaly", by: "crew", task: ev.task, agent: ev.agent, data: { kind, detail } });
+  };
+
+  const onEvent = (ev: CrewEvent) => {
+    for (const ws of clients) ws.send(JSON.stringify(ev));
+    const threshold = cfg.anomalies?.repeat_threshold ?? 2;
+    if (ev.type === "job.failed" || ev.type === "job.timeout") {
+      const k = ev.task ?? String(ev.data?.job);
+      const n = (failures.get(k) ?? 0) + 1;
+      failures.set(k, n);
+      if (n === threshold) anomaly("repeated_failures", ev, `${n} failed jobs on ${k}`);
+    }
+    if (ev.type === "task.released" && ev.data?.reason === "claim expired" && ev.task) {
+      const n = (expiries.get(ev.task) ?? 0) + 1;
+      expiries.set(ev.task, n);
+      if (n === threshold) anomaly("claims_expiring", ev, `${ev.task} claim expired ${n} times`);
+    }
+    if (ev.type === "budget.exceeded") anomaly("budget", ev, String(ev.data?.reason ?? ""));
+    for (const ag of listAgents(c)) if (shouldWake(c, ag, ev)) enqueue(ag.name, { reason: `event ${ev.type}`, event: ev });
+  };
+
+  const readNewEvents = () => {
+    for (const f of eventFiles(c)) {
+      const size = statSync(f).size;
+      const from = offsets.get(f) ?? 0;
+      if (size <= from) continue;
+      const fd = openSync(f, "r");
+      const buf = Buffer.alloc(size - from);
+      readSync(fd, buf, 0, buf.length, from);
+      closeSync(fd);
+      const text = buf.toString("utf8");
+      const lastNl = text.lastIndexOf("\n");
+      if (lastNl < 0) continue;
+      offsets.set(f, from + Buffer.byteLength(text.slice(0, lastNl + 1)));
+      for (const ev of parseEvents(text.slice(0, lastNl + 1))) onEvent(ev);
+    }
+  };
+
+  const dispatch = () => {
+    if (isPaused(c)) return;
+    const max = cfg.limits?.max_sessions ?? 3;
+    const live = activeSessions(c);
+    const now = Date.now();
+    for (const [k, t] of launching) if (now - t > 15_000 || live.some((s) => s.agent === k)) launching.delete(k);
+    let count = live.length + launching.size;
+    for (const [agent, q] of queue) {
+      if (!q.length) continue;
+      if (count >= max) break;
+      if (live.some((s) => s.agent === agent) || launching.has(agent)) continue;
+      const w = q.shift()!;
+      if (q.length) w.reason += ` (+${q.length} more queued)`;
+      launch(c, agent, w);
+      launching.set(agent, now);
+      count++;
+    }
+  };
+
+  const schedule = () => {
+    const d = new Date();
+    const m = d.getHours() * 60 + d.getMinutes();
+    if (m === lastMinute) return;
+    lastMinute = m;
+    for (const ag of listAgents(c))
+      if (ag.def.enabled && ag.def.schedule && cronMatches(ag.def.schedule, d)) enqueue(ag.name, { reason: `schedule ${ag.def.schedule}` });
+  };
+
+  const sweep = async () => {
+    await withMutex(c, () => {
+      const jobs = listJobs(c);
+      for (const j of jobs.filter((x) => x.status === "running" && !pidAlive(x.pid))) {
+        const { j: cur, md } = loadJob(c, j.id);
+        cur.status = "failed";
+        cur.ended = new Date().toISOString();
+        saveJob(c, cur, md);
+        releaseLocksFor(c, j.id);
+        emit(c, { type: "job.failed", by: "crew", agent: j.agent, task: j.task ?? undefined, data: { job: j.id, exit: null, reason: "job runner lost" } });
+      }
+      const activeJobTasks = new Set(jobs.filter((x) => ["queued", "waiting", "running"].includes(x.status)).map((x) => x.task));
+      for (const t of listTasks(c))
+        if (t.status === "claimed" && t.claim_expires && Date.parse(t.claim_expires) < Date.now() && !activeJobTasks.has(t.id))
+          releaseTask(c, t.id, "crew", "claim expired");
+      writeJson(c.p(".state", "sessions.json"), activeSessions(c));
+    });
+  };
+
+  const server = Bun.serve({
+    port,
+    hostname: "127.0.0.1",
+    async fetch(req, srv) {
+      const url = new URL(req.url);
+      const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type" };
+      if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+      const json = (v: unknown, status = 200) => Response.json(v, { status, headers: cors });
+      if (url.pathname === "/health") return json({ ok: true, vault: c.vault, pid: process.pid });
+      const auth = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? url.searchParams.get("token");
+      if (token && auth !== token) return json({ error: "unauthorized" }, 401);
+      if (url.pathname === "/stream") return srv.upgrade(req) ? undefined : json({ error: "upgrade failed" }, 400);
+      try {
+        switch (url.pathname) {
+          case "/status":
+            return json(statusData(c));
+          case "/tasks":
+            return json(listTasks(c));
+          case "/agents":
+            return json(listAgents(c).map((a) => a.def));
+          case "/jobs":
+            return json(listJobs(c));
+          case "/review":
+            return json(
+              listTasks(c)
+                .filter((t) => t.status === "review" || (t.sampled && !t.sampled_ack))
+                .map((t) => ({ ...t, notes: readMd(c.p("tasks", `${t.id}.md`)).body.split("## Notes")[1]?.trim() ?? "" })),
+            );
+          case "/events": {
+            const since = Number(url.searchParams.get("since") ?? Date.now() - 36e5);
+            return json(readEvents(c, since).slice(-Number(url.searchParams.get("limit") ?? 200)));
+          }
+          case "/cmd": {
+            if (req.method !== "POST") return json({ error: "POST only" }, 405);
+            const body = (await req.json()) as { argv?: string[]; as?: string };
+            const argv = body.argv ?? [];
+            if (["serve", "session"].includes(argv[0] ?? "") || (argv[0] === "job" && argv[1] === "exec"))
+              return json({ error: "not allowed over HTTP" }, 400);
+            const o = await run(c, [...argv, ...(body.as ? ["--as", body.as] : [])]);
+            return json({ code: o.code, out: o.lines.join("\n"), data: o.json ?? null });
+          }
+          default:
+            return json({ error: "not found" }, 404);
+        }
+      } catch (e) {
+        return json({ error: (e as Error).message }, 500);
+      }
+    },
+    websocket: {
+      open(ws) {
+        clients.add(ws);
+      },
+      close(ws) {
+        clients.delete(ws);
+      },
+      message() {
+        /* read-only stream */
+      },
+    },
+  });
+
+  const stateFile = c.p(".state", "server.json");
+  writeJson(stateFile, { pid: process.pid, port: server.port, started: new Date().toISOString() });
+  emit(c, { type: "crew.server_started", by: "crew", data: { port: server.port } });
+  console.log(`crew server on http://127.0.0.1:${server.port} for ${c.vault}`);
+
+  const shutdown = () => {
+    if (existsSync(stateFile)) rmSync(stateFile, { force: true });
+    server.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  let ticks = 0;
+  setInterval(() => {
+    try {
+      readNewEvents();
+      schedule();
+      dispatch();
+      if (++ticks % 30 === 0) void sweep().catch((e) => console.error("sweep:", e));
+    } catch (e) {
+      console.error("tick:", e);
+    }
+  }, 1000);
+}
