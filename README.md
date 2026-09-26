@@ -4,13 +4,18 @@ A documentation-driven agent team for an Obsidian vault.
 
 - **crew** (`packages/crew`) is a standalone Bun CLI and server: the team's manager and central comms. It owns tasks, claims, the blackboard, events, jobs, locks, budgets, verification and traces. It runs with or without Obsidian.
 - **Wrangler** (`packages/wrangler`) is the Obsidian plugin. It starts or attaches to the crew server for the vault and shows the team as views: crew sidebar, board, review inbox, blackboard feed, jobs, and a status bar.
-- **crew-manager** (`skill/crew-manager`) is the skill that teaches your copilot (Claude, Copilot, OpenCode) to run the team.
+- **crew-manager** (`skill/crew-manager`) is the skill that teaches your copilot (Claude, Copilot, OpenCode) to run the team, once crew is set up.
+- **wrangler-setup** (`skill/wrangler-setup`) is the skill that teaches your copilot to install Wrangler and bootstrap crew in a vault that doesn't have them yet.
 
 The full design is in [docs/SPEC.md](docs/SPEC.md).
 
 ## Quick start
 
-Wrangler isn't in the Obsidian community plugin directory yet, so install it with one command:
+Easiest: point your copilot (in the vault, or anywhere with shell access) at the setup skill and let it do the rest —
+
+> Read https://raw.githubusercontent.com/roninito/crew/main/skill/wrangler-setup/SKILL.md and set up crew in this vault.
+
+Or do it by hand. Wrangler isn't in the Obsidian community plugin directory yet, so install it with one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/roninito/crew/main/scripts/install-wrangler.sh | bash -s -- ~/Vaults/Studio

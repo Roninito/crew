@@ -1,6 +1,6 @@
 ---
 name: crew-manager
-description: Run and supervise the vault's AI agent team through the crew CLI. Use this skill whenever the user mentions crew, Wrangler, agents in the vault, the board, tasks, the blackboard, agent logs, jobs, reviews, verdicts, traces, or the crew wiki, and whenever they ask to create or design an agent, plan or assign work, check what agents are doing, audit work against its spec, or take on a task alongside the agents, even if they don't say "crew".
+description: Run and supervise the vault's AI agent team through the crew CLI. Use this skill whenever the user mentions crew, Wrangler, agents in the vault, the board, tasks, the blackboard, agent logs, jobs, reviews, verdicts, traces, or the crew wiki, and whenever they ask to create or design an agent, plan or assign work, check what agents are doing, audit work against its spec, or take on a task alongside the agents, even if they don't say "crew". If there's no crew/crew.md in this vault yet, this isn't set up — use wrangler-setup instead (https://raw.githubusercontent.com/roninito/crew/main/skill/wrangler-setup/SKILL.md).
 ---
 
 # Crew manager

@@ -33,6 +33,7 @@ crew does all the work, so the team keeps running even when Obsidian is closed. 
 | crew | Bun CLI + long-running server (`crew serve --vault <path>`) | State broker, event bus, scheduler, agent launcher, job runner, locks, budgets, verification routing, trace builder |
 | Wrangler | Obsidian plugin | Sets up `crew/` in a vault on first enable, starts `crew serve` for the vault or attaches to one already running, renders crew views, sends UI actions to crew |
 | crew-manager skill | A skill folder in the vault | Teaches the human's AI copilot how to run the team through crew |
+| wrangler-setup skill | A skill folder in the crew repo, fetched over HTTP | Teaches the human's AI copilot how to install Wrangler and bootstrap crew in a vault that doesn't have them yet |
 
 **crew interfaces**
 
