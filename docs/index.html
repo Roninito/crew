@@ -169,12 +169,11 @@
         <h2>Quick start</h2>
         <p>Wrangler isn't in the Obsidian community plugin directory yet, so install it with one command:</p>
         <pre><code>curl -fsSL https://raw.githubusercontent.com/roninito/crew/main/scripts/install-wrangler.sh | bash -s -- "/path/to/your/vault"</code></pre>
-        <p>Then open Obsidian, go to <b>Settings → Community plugins</b>, and enable <b>Wrangler</b>. That's the whole install -- no Bun, no source checkout. The first time it's enabled in a vault, Wrangler:</p>
+        <p>That also installs <code>crew</code> itself to <code>~/.local/bin/crew</code>, so <code>crew status</code> works from any terminal, not just through Wrangler. Then open Obsidian, go to <b>Settings → Community plugins</b>, and enable <b>Wrangler</b>. That's the whole install -- no Bun, no source checkout. The first time it's enabled in a vault, Wrangler:</p>
         <ul>
           <li>creates the <code>crew/</code> folder layout, templates, wiki, and skill</li>
           <li>generates the API token in <code>crew/crew.md</code></li>
-          <li>downloads the right <code>crew</code> binary for your OS from GitHub Releases</li>
-          <li>starts the server</li>
+          <li>starts the server, using the <code>crew</code> command just installed (or downloading its own copy if that step was skipped)</li>
         </ul>
         <div class="tip"><p>Prefer to have a copilot do this for you? Point it at the <a href="https://raw.githubusercontent.com/roninito/crew/main/skill/wrangler-setup/SKILL.md">wrangler-setup skill</a> and ask it to set up crew in your vault.</p></div>
       </section>

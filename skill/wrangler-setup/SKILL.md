@@ -22,14 +22,14 @@ crew and Wrangler live at https://github.com/roninito/crew. Wrangler isn't in th
    ```bash
    curl -fsSL https://raw.githubusercontent.com/roninito/crew/main/scripts/install-wrangler.sh | bash -s -- "<vault root>"
    ```
-   This downloads `main.js`, `manifest.json` and `styles.css` from crew's latest release into `<vault root>/.obsidian/plugins/wrangler/`. It does not touch anything else in the vault, and it does not enable the plugin.
+   This downloads `main.js`, `manifest.json` and `styles.css` from crew's latest release into `<vault root>/.obsidian/plugins/wrangler/`, and also installs `crew` itself to `~/.local/bin/crew` (best effort, skipped on an unrecognized OS/arch) so the CLI works from any terminal afterward, not only through Wrangler. It does not touch anything else in the vault, and it does not enable the plugin. If it says to add `~/.local/bin` to PATH, do that before relying on a bare `crew` command in new terminal sessions.
 
 4. **Tell the human to enable it.** This step needs a human in Obsidian's UI — you can't do it from the shell:
    - Open the vault in Obsidian.
    - Settings > Community plugins. If community plugins are off, Obsidian shows a one-time confirmation to turn them on; the human has to accept that.
    - Find **Wrangler** in the installed list and enable it.
 
-   The moment it's enabled, Wrangler creates the `crew/` folder layout, templates, wiki and skill, generates the API token in `crew/crew.md`, downloads the `crew` binary for the human's OS, and starts the server. No other install step exists.
+   The moment it's enabled, Wrangler creates the `crew/` folder layout, templates, wiki and skill, generates the API token in `crew/crew.md`, and starts the server -- using the globally-installed `crew` from step 3 if present, or downloading its own copy otherwise. No other install step exists.
 
 5. **Confirm it worked.** Once the human says they've enabled it (or after giving it a few seconds), check:
    ```bash

@@ -21,7 +21,9 @@ Or do it by hand. Wrangler isn't in the Obsidian community plugin directory yet,
 curl -fsSL https://raw.githubusercontent.com/roninito/crew/main/scripts/install-wrangler.sh | bash -s -- ~/Vaults/Studio
 ```
 
-Then enable **Wrangler** in Obsidian (Settings, Community plugins). No Bun install, no source checkout: the first time it's enabled in a vault, Wrangler creates the `crew/` folder layout, generates the API token, and downloads the right `crew` binary for your OS from GitHub Releases on its own, then starts the server. That's the whole install.
+That also installs the `crew` command itself to `~/.local/bin/crew` (add it to your PATH if the script tells you to), so `crew status` works from any terminal, not just from inside Wrangler.
+
+Then enable **Wrangler** in Obsidian (Settings, Community plugins). No Bun install, no source checkout: the first time it's enabled in a vault, Wrangler creates the `crew/` folder layout, generates the API token, and starts the server -- using the `crew` command the script just installed, or downloading its own copy if that step was skipped (unrecognized platform, or you enabled Wrangler by hand-copying its files instead of using the script). That's the whole install.
 
 To keep agents working with Obsidian closed, run crew as a service instead:
 

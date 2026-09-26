@@ -1,8 +1,9 @@
 // Wrangler: the Obsidian face of crew. It starts or attaches to `crew serve` for this vault
 // and shows the team as views. Every action goes through the crew HTTP API, so crew stays the single writer.
 import { type ChildProcess, spawn } from "child_process";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { parse as parseYaml } from "yaml";
 import {
@@ -368,10 +369,37 @@ export default class WranglerPlugin extends Plugin {
     new Notice(`Wrangler set up crew/ in this vault. External assets folder: ${assetsDir}`);
   }
 
-  /** Where Wrangler keeps its own downloaded copy of crew, so users don't need Bun or a source checkout. */
+  /** Where install-wrangler.sh (or an earlier vault's Wrangler) installs crew globally, on PATH. */
+  globalCrewPath(): string {
+    return join(homedir(), ".local", "bin", process.platform === "win32" ? "crew.exe" : "crew");
+  }
+
+  /** Where Wrangler keeps its own downloaded copy of crew, if no global install exists yet. */
   managedCrewPath(): string {
     const dir = join(this.vaultPath(), this.app.vault.configDir, "plugins", "wrangler", "bin");
     return join(dir, process.platform === "win32" ? "crew.exe" : "crew");
+  }
+
+  /** Prefers the global install (so a terminal's `crew` and Wrangler's server are the same binary). */
+  async resolveCrewBinary(): Promise<string | null> {
+    const global = this.globalCrewPath();
+    if (existsSync(global)) return global;
+    const managed = await this.ensureCrewBinary();
+    if (managed) this.linkGlobalCrew(managed);
+    return managed;
+  }
+
+  /** Best-effort: only fills an empty slot, never overwrites -- something else (or the user) may already be there. */
+  linkGlobalCrew(target: string): void {
+    if (process.platform === "win32") return;
+    const link = this.globalCrewPath();
+    if (existsSync(link)) return;
+    try {
+      mkdirSync(dirname(link), { recursive: true });
+      symlinkSync(target, link);
+    } catch {
+      /* best effort; Wrangler's own use of the managed copy is unaffected either way */
+    }
   }
 
   releaseAssetName(): string | null {
@@ -417,7 +445,7 @@ export default class WranglerPlugin extends Plugin {
       cmd = this.settings.bunPath;
       args = [this.settings.crewCliPath, "serve", "--vault", this.vaultPath()];
     } else {
-      const bin = await this.ensureCrewBinary();
+      const bin = await this.resolveCrewBinary();
       if (!bin) return;
       cmd = bin;
       args = ["serve", "--vault", this.vaultPath()];

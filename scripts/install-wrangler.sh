@@ -8,6 +8,7 @@
 # Usage: install-wrangler.sh <vault>
 set -euo pipefail
 REPO="roninito/crew"
+BIN_DIR="${CREW_BIN_DIR:-$HOME/.local/bin}"
 VAULT="${1:?Usage: install-wrangler.sh <vault>}"
 [ -d "$VAULT" ] || { echo "Vault not found: $VAULT" >&2; exit 1; }
 VAULT="$(cd "$VAULT" && pwd)"
@@ -23,6 +24,30 @@ for f in main.js manifest.json styles.css; do
   mv "$DEST/$f.tmp" "$DEST/$f"
 done
 echo "Wrangler installed in $DEST"
+
+# Install crew itself globally, so `crew status` etc. work from any terminal -- not just as
+# something Wrangler spawns internally. Best effort: if the platform isn't recognized, Wrangler
+# still works fine and falls back to downloading a private copy into its own plugin folder.
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) ASSET="crew-darwin-arm64" ;;
+  Darwin-x86_64) ASSET="crew-darwin-x64" ;;
+  Linux-aarch64|Linux-arm64) ASSET="crew-linux-arm64" ;;
+  Linux-x86_64) ASSET="crew-linux-x64" ;;
+  *) ASSET="" ;;
+esac
+if [ -n "$ASSET" ]; then
+  mkdir -p "$BIN_DIR"
+  curl -fsSL "$BASE/$ASSET" -o "$BIN_DIR/crew.tmp"
+  chmod +x "$BIN_DIR/crew.tmp"
+  mv "$BIN_DIR/crew.tmp" "$BIN_DIR/crew"
+  echo "crew installed in $BIN_DIR"
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) echo "Add $BIN_DIR to your PATH, e.g.:  echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> ~/.zshrc" ;;
+  esac
+else
+  echo "Skipped installing crew globally ($(uname -s)/$(uname -m) not recognized); Wrangler will manage its own copy instead."
+fi
 
 # If this vault already has a Copilot-style skills folder, give it the crew-manager skill too, so
 # it can run the team without waiting for crew/ to exist (Wrangler copies its own into crew/skills/
