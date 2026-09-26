@@ -206,6 +206,8 @@ Agents do long work by writing a Bun or Python script, starting it as a job, and
 4. Exit code 0 sends `job.succeeded`. A non-zero exit or crash sends `job.failed`. Passing the time limit kills the job and sends `job.timeout`.
 5. crew wakes the agent with its job note, the exit code, result.json, the last 50 lines of output, and the list of files produced.
 
+**The time limit** (step 4) is not the same thing as a task claim's `claim_minutes` (Vault layout, `crew.md`) -- that's bookkeeping on the task record, checking whether an agent has gone silent. This is a real process watchdog on the job's script. Resolved in order: `--timeout` on `crew job run`, else the agent's own `jobs.default_timeout` in its agent.md, else crew.md's `limits.default_job_timeout` (15m if that's unset too). A long-running job should call `renew()` periodically (see below) to keep its task claim alive independently of this.
+
 **Script helpers** (small libraries for Bun and Python)
 
 ```python

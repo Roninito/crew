@@ -50,7 +50,7 @@ export type CrewConfig = {
   vault_name?: string;
   api?: { port?: number; token?: string };
   runners?: Record<string, RunnerConfig>;
-  limits?: { max_sessions?: number; max_jobs?: number; claim_minutes?: number };
+  limits?: { max_sessions?: number; max_jobs?: number; claim_minutes?: number; default_job_timeout?: string };
   budget?: { crew_daily_usd?: number };
   locks?: string[];
   external?: Record<string, string>;

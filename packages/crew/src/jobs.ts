@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute } from "node:path";
+import { getAgent } from "./agents";
 import {
   type Args,
   type Crew,
@@ -86,6 +87,19 @@ export function releaseLocksFor(c: Crew, jobId: string): void {
 }
 
 // crew job run --script path [--task T] [--lock gpu] [--timeout 20m] [--note "wake plan"] [-- args...]
+// Priority: --timeout flag > the agent's own jobs.default_timeout > crew.md's limits.default_job_timeout > "15m".
+function defaultTimeout(c: Crew, agent: string): string {
+  if (agent !== "human") {
+    try {
+      const perAgent = getAgent(c, agent).def.jobs?.default_timeout;
+      if (perAgent) return perAgent;
+    } catch {
+      /* agent has no folder (e.g. a stale actor name); fall through to the crew-level default */
+    }
+  }
+  return c.config().limits?.default_job_timeout ?? "15m";
+}
+
 export function jobRun(c: Crew, a: Args, o: Out): void {
   const agent = actorOf(a);
   const s = flag(a, "script");
@@ -95,7 +109,7 @@ export function jobRun(c: Crew, a: Args, o: Out): void {
   if (!script) throw new CrewError(`Script not found: ${s} (looked in ${candidates.join(", ")}).`);
   const lock = flag(a, "lock") ?? null;
   if (lock && !(c.config().locks ?? []).includes(lock)) throw new CrewError(`Unknown lock "${lock}". Declare it in crew.md locks.`);
-  const timeout = flag(a, "timeout") ?? "15m";
+  const timeout = flag(a, "timeout") ?? defaultTimeout(c, agent);
   parseDuration(timeout, 0);
   const id = nextId(c, "J");
   const task = flag(a, "task") ?? process.env.CREW_TASK ?? null;

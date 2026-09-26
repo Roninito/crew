@@ -82,6 +82,13 @@ curl -sf -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
 for i in $(seq 1 20); do grep -q '"session.ended".*"tester"' "$VAULT/crew/events/"*.jsonl && break; sleep 0.5; done
 grep -q '"session.started"' "$VAULT/crew/events/"*.jsonl && pass "task.ready woke the subscribed agent" || { cat "$TMP/server.log"; fail "no wake"; }
 
+# Job timeout resolution: --timeout wins, then the agent's own jobs.default_timeout, then crew.md's default.
+tmp="$(mktemp)"; sed 's/default_timeout: 15m/default_timeout: 7m/' "$VAULT/crew/agents/tester/agent.md" > "$tmp" && mv "$tmp" "$VAULT/crew/agents/tester/agent.md"
+"${CREW[@]}" job run --as tester --task T-0002 --script "$VAULT/crew/templates/scripts/example-job.py" >/dev/null
+"${CREW[@]}" jobs --json | grep -q '"timeout": "7m"' && pass "job timeout falls back to the agent's own jobs.default_timeout" || fail "agent-level default_timeout not honored"
+"${CREW[@]}" job run --as tester --task T-0002 --script "$VAULT/crew/templates/scripts/example-job.py" --timeout 2m >/dev/null
+"${CREW[@]}" jobs --json | grep -q '"timeout": "2m"' && pass "explicit --timeout still wins over the agent default" || fail "--timeout was overridden"
+
 # Kill switch.
 "${CREW[@]}" stop --all >/dev/null && "${CREW[@]}" status | grep -q PAUSED && pass "kill switch pauses the crew"
 "${CREW[@]}" resume >/dev/null && pass "resume"
