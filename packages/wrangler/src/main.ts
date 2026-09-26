@@ -4,6 +4,7 @@ import { type ChildProcess, spawn } from "child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { parse as parseYaml } from "yaml";
 import {
   type App,
   FileSystemAdapter,
@@ -18,12 +19,129 @@ import {
 } from "obsidian";
 import { VAULT_ASSETS } from "./vault-assets.generated";
 
-const CREW_RELEASES = "https://github.com/roninito/crew/releases/latest/download";
+const CREW_REPO = "roninito/crew";
+const CREW_RELEASES = `https://github.com/${CREW_REPO}/releases/latest/download`;
 const VAULT_DIRS = [
   "agents", "tasks", "blackboard", "events", "jobs", "assets",
   "reviews", "traces", "worktrees", "wiki", "templates/agents",
   "templates/scripts", "skills", ".state",
 ];
+
+// ---------- AI CLI detection for the spawn-agent form ----------
+// Detection and model lists are only as good as what each tool documents today; this is a
+// convenience for the dropdown, not a guarantee. Verify the crew.md runner config it suggests
+// before enabling an agent, especially any approval/sandbox flags a runner needs to run unattended.
+interface RunnerProbe {
+  id: string;
+  label: string;
+  checkCmd: string;
+  verify?: (output: string) => boolean;
+  staticModels: string[] | null;
+  liveModelsCmd?: string;
+  configSnippet: string;
+}
+
+const RUNNER_PROBES: RunnerProbe[] = [
+  {
+    id: "claude",
+    label: "Claude Code",
+    checkCmd: "claude --version",
+    staticModels: ["sonnet", "opus", "haiku"],
+    configSnippet:
+      '  claude:\n    cmd: claude\n    args: ["-p", "{{prompt}}", "--model", "{{model}}", "--output-format", "json", "--permission-mode", "acceptEdits"]\n    cost_from_json: true',
+  },
+  {
+    id: "opencode",
+    label: "opencode",
+    checkCmd: "opencode --version",
+    staticModels: null,
+    liveModelsCmd: "opencode models",
+    configSnippet: '  opencode:\n    cmd: opencode\n    args: ["run", "--model", "{{model}}", "{{prompt}}"]',
+  },
+  {
+    id: "codex",
+    label: "Codex",
+    checkCmd: "codex --version",
+    staticModels: null,
+    configSnippet:
+      '  codex:\n    cmd: codex\n    args: ["exec", "--model", "{{model}}", "{{prompt}}"]\n    # codex needs a flag to skip interactive approval prompts for unattended runs --\n    # check `codex exec --help` for the current sandbox/approval flag and add it above.',
+  },
+  {
+    id: "cursor",
+    label: "Cursor",
+    checkCmd: "agent --version",
+    verify: (out) => /cursor/i.test(out),
+    staticModels: null,
+    configSnippet: '  cursor:\n    cmd: agent\n    args: ["-p", "{{prompt}}", "--model", "{{model}}", "--output-format", "text"]',
+  },
+];
+
+interface DetectedRunner {
+  id: string;
+  label: string;
+  models: string[] | null;
+  configSnippet: string;
+}
+
+function runCapture(cmd: string, timeoutMs = 5000): Promise<{ code: number; out: string }> {
+  return new Promise((resolve) => {
+    const isWin = process.platform === "win32";
+    const child = isWin ? spawn("cmd.exe", ["/d", "/c", cmd], { windowsHide: true }) : spawn("bash", ["-lc", cmd]);
+    let out = "";
+    let done = false;
+    const finish = (code: number) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ code, out });
+    };
+    child.stdout?.on("data", (d) => (out += String(d)));
+    child.stderr?.on("data", (d) => (out += String(d)));
+    child.on("close", (code) => finish(code ?? 1));
+    child.on("error", () => finish(1));
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+      finish(1);
+    }, timeoutMs);
+  });
+}
+
+async function detectRunners(): Promise<DetectedRunner[]> {
+  const found: DetectedRunner[] = [];
+  for (const probe of RUNNER_PROBES) {
+    const res = await runCapture(probe.checkCmd);
+    if (res.code !== 0) continue;
+    if (probe.verify && !probe.verify(res.out)) continue;
+    let models = probe.staticModels;
+    if (probe.liveModelsCmd) {
+      const live = await runCapture(probe.liveModelsCmd);
+      if (live.code === 0) {
+        const parsed = live.out
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => /^[\w.-]+(?:\/[\w.:-]+)+$/.test(l));
+        if (parsed.length) models = parsed;
+      }
+    }
+    found.push({ id: probe.id, label: probe.label, models, configSnippet: probe.configSnippet });
+  }
+  return found;
+}
+
+function isNewerVersion(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
 
 // ---------- types from the crew API ----------
 type AgentStatus = {
@@ -402,6 +520,55 @@ export default class WranglerPlugin extends Plugin {
     const r = await this.run(["trace", id]);
     if (r.code === 0) this.openNote(`crew/traces/${id}.md`);
   }
+
+  /** Runner ids already configured under runners: in crew/crew.md, so the spawn form can flag ones that aren't. */
+  async configuredRunners(): Promise<Set<string>> {
+    try {
+      const raw = await this.app.vault.adapter.read("crew/crew.md");
+      const fm = raw.match(/^---\n([\s\S]*?)\n---/);
+      if (!fm) return new Set();
+      const data = parseYaml(fm[1]) as { runners?: Record<string, unknown> };
+      return new Set(Object.keys(data.runners ?? {}));
+    } catch {
+      return new Set();
+    }
+  }
+
+  pluginDir(): string {
+    return join(this.vaultPath(), this.app.vault.configDir, "plugins", "wrangler");
+  }
+
+  /** Compares against the crew repo's latest release tag; updates main.js/manifest.json/styles.css in place if newer. */
+  async checkForUpdates(notifyIfCurrent = true): Promise<void> {
+    let latest: string | null = null;
+    try {
+      const res = await requestUrl({ url: `https://api.github.com/repos/${CREW_REPO}/releases/latest`, throw: false });
+      if (res.status === 200) latest = ((res.json as { tag_name?: string }).tag_name ?? "").replace(/^v/, "") || null;
+    } catch {
+      /* network hiccup; report below */
+    }
+    if (!latest) {
+      new Notice("Wrangler: couldn't check for updates.");
+      return;
+    }
+    const current = this.manifest.version;
+    if (!isNewerVersion(latest, current)) {
+      if (notifyIfCurrent) new Notice(`Wrangler is up to date (v${current}).`);
+      return;
+    }
+    new Notice(`Wrangler: updating to v${latest}...`);
+    try {
+      const dir = this.pluginDir();
+      for (const f of ["main.js", "manifest.json", "styles.css"]) {
+        const res = await requestUrl({ url: `${CREW_RELEASES}/${f}`, throw: false });
+        if (res.status !== 200) throw new Error(`couldn't download ${f} (HTTP ${res.status})`);
+        writeFileSync(join(dir, f), res.text);
+      }
+      new Notice(`Wrangler updated to v${latest}. Reload Obsidian (Cmd/Ctrl+R) to finish.`);
+    } catch (e) {
+      new Notice(`Wrangler update failed: ${(e as Error).message}`);
+    }
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -769,21 +936,82 @@ class NewAgentModal extends Modal {
   constructor(app: App, private plugin: WranglerPlugin) {
     super(app);
   }
-  onOpen(): void {
+  async onOpen(): Promise<void> {
     this.titleEl.setText("Spawn agent");
-    const v = { name: "", template: "worker", runner: "claude", model: "sonnet", can: "" };
+    const v = { name: "", template: "worker", runner: "dryrun", model: "", can: "" };
     new Setting(this.contentEl).setName("Name").setDesc("Lowercase, digits and dashes").addText((t) => t.onChange((x) => (v.name = x)));
     new Setting(this.contentEl).setName("Template").addDropdown((d) =>
       d.addOptions({ worker: "Worker", bridge: "Bridge", verifier: "Verifier", planner: "Planner", watcher: "Watcher" }).setValue("worker").onChange((x) => (v.template = x)),
     );
-    new Setting(this.contentEl).setName("Runner").addText((t) => t.setValue("claude").onChange((x) => (v.runner = x)));
-    new Setting(this.contentEl).setName("Model").addText((t) => t.setValue("sonnet").onChange((x) => (v.model = x)));
+
+    const runnerSetting = new Setting(this.contentEl).setName("Runner").setDesc("Detecting installed AI tools...");
+    const modelContainer = this.contentEl.createDiv();
+    const otherContainer = this.contentEl.createDiv();
+
+    const [configured, detected] = await Promise.all([this.plugin.configuredRunners(), detectRunners()]);
+    const byId = new Map(detected.map((r) => [r.id, r]));
+
+    const renderModelField = () => {
+      modelContainer.empty();
+      const info = byId.get(v.runner);
+      if (info?.models?.length) {
+        v.model = info.models[0]!;
+        new Setting(modelContainer).setName("Model").addDropdown((d) => {
+          const opts: Record<string, string> = {};
+          for (const m of info.models!) opts[m] = m;
+          d.addOptions(opts).setValue(v.model).onChange((x) => (v.model = x));
+        });
+      } else {
+        v.model = "";
+        new Setting(modelContainer)
+          .setName("Model")
+          .setDesc(v.runner === "dryrun" ? "Not used by dryrun." : "No known model list for this runner -- type one.")
+          .addText((t) => t.setPlaceholder("e.g. sonnet, gpt-5").onChange((x) => (v.model = x)));
+      }
+    };
+    const renderOtherField = () => {
+      otherContainer.empty();
+      if (v.runner !== "__other") return;
+      v.runner = "";
+      new Setting(otherContainer)
+        .setName("Custom runner")
+        .setDesc("Must match a key under runners: in crew/crew.md.")
+        .addText((t) => t.onChange((x) => (v.runner = x)));
+    };
+
+    const runnerOptions: Record<string, string> = { dryrun: "Testing (dryrun)" };
+    for (const r of detected) runnerOptions[r.id] = configured.has(r.id) ? r.label : `${r.label} (not in crew.md yet)`;
+    runnerOptions.__other = "Other (type manually)";
+    runnerSetting.setDesc(detected.length ? "" : "No known AI CLIs found on PATH. Pick dryrun for testing, or type a custom runner.");
+    runnerSetting.addDropdown((d) =>
+      d.addOptions(runnerOptions).setValue("dryrun").onChange((x) => {
+        v.runner = x;
+        renderModelField();
+        renderOtherField();
+      }),
+    );
+    renderModelField();
+
     new Setting(this.contentEl).setName("Capabilities").setDesc("Comma separated, matched against task needs").addText((t) => t.onChange((x) => (v.can = x)));
     this.contentEl.createEl("p", { cls: "crew-muted", text: "The agent starts disabled. Fill the blanks in its agent.md, then enable it from the crew sidebar." });
     const row = this.contentEl.createDiv({ cls: "crew-actions" });
     btn(row, "Spawn agent", async () => {
-      const r = await this.plugin.run(["agent", "new", v.name.trim(), "--template", v.template, "--runner", v.runner, "--model", v.model, "--can", v.can], true);
+      if (!v.name.trim()) return new Notice("Give the agent a name.");
+      if (!v.runner.trim()) return new Notice("Pick or type a runner.");
+      const argv = ["agent", "new", v.name.trim(), "--template", v.template, "--runner", v.runner, "--can", v.can];
+      if (v.model.trim()) argv.push("--model", v.model.trim());
+      const r = await this.plugin.run(argv, true);
       if (r.code === 0) this.plugin.openNote(`crew/agents/${v.name.trim()}/agent.md`);
+      const info = byId.get(v.runner);
+      if (info && !configured.has(v.runner)) {
+        new OutputModal(
+          this.app,
+          `Add "${v.runner}" to crew.md first`,
+          `crew/crew.md has no "${v.runner}" runner yet, so this agent can't start sessions until you add one.\n\n` +
+            `Suggested, under runners: in crew/crew.md --\n\n${info.configSnippet}\n\n` +
+            `Review it -- especially any approval/sandbox flags -- before saving.`,
+        ).open();
+      }
       this.close();
     }, true);
   }
@@ -818,6 +1046,19 @@ class WranglerSettingTab extends PluginSettingTab {
   display(): void {
     const el = this.containerEl;
     el.empty();
+    new Setting(el)
+      .setName("Wrangler version")
+      .setDesc(`Installed: v${this.plugin.manifest.version}`)
+      .addButton((b) =>
+        b.setButtonText("Check for updates").onClick(async () => {
+          b.setDisabled(true);
+          try {
+            await this.plugin.checkForUpdates();
+          } finally {
+            b.setDisabled(false);
+          }
+        }),
+      );
     new Setting(el)
       .setName("crew CLI path")
       .setDesc(

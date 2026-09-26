@@ -283,6 +283,10 @@ The views answer three questions at a glance: what's running, what's stuck, and 
 | Trace view | Task note | Timeline from `crew trace` | Open any linked item |
 | Status bar | Bottom | "crew ● 3 running · 2 sleeping · 1 needs review · $1.40 today" | Open Review inbox |
 
+**Spawn agent form.** Wrangler probes the host for known AI CLIs (Claude Code, Codex, opencode, Cursor) on PATH and offers detected ones in the Runner dropdown. Where a tool documents a live model-listing command (opencode) it queries it; where only known aliases exist (Claude Code: sonnet/opus/haiku) it uses a static list; otherwise the Model field falls back to free text. Detection is a convenience for the form, not a guarantee the runner works end to end: if the chosen runner has no matching entry under `runners:` in `crew/crew.md`, Wrangler creates the agent (it starts disabled either way) and shows a suggested config snippet to add, since crew.md is the human's own settings note and Wrangler doesn't write it for them.
+
+**Updating Wrangler.** Settings has a "Check for updates" button: it compares the installed version against crew's latest GitHub release tag and, if newer, downloads `main.js`/`manifest.json`/`styles.css` in place. Reloading Obsidian picks up the update.
+
 ## Example team: game asset pipeline
 
 Five agents share one board and produce game-ready assets without knowing how the others work. Swapping the Unity bridge for a Godot bridge changes nothing else.
