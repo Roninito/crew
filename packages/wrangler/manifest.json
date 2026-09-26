@@ -1,9 +1,10 @@
 {
   "id": "wrangler",
   "name": "Wrangler",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "minAppVersion": "1.5.0",
   "description": "Run and supervise a crew of AI agents from your vault: board, reviews, blackboard feed, jobs and live status, backed by the crew server.",
   "author": "RastaCamp Studio",
+  "authorUrl": "https://roninito.github.io/crew/",
   "isDesktopOnly": true
 }

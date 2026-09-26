@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>crew + Wrangler</title>
+    <meta name="description" content="A documentation-driven agent team for your Obsidian vault. crew is the manager and central comms; Wrangler is the Obsidian plugin that shows it as views.">
+    <style>
+      /* ================================================================
+       * ToolwrightTheme, adapted for the crew + Wrangler docs site.
+       * Light = article mode, dark = editor mode, via prefers-color-scheme.
+       * =============================================================== */
+      :root {
+        --bg: #f8f9fb; --surface: #ffffff; --surface-2: #f3f5f7;
+        --fg: #111827; --fg-strong: #030712; --muted: #4b5563; --faint: #9ca3af;
+        --line: #e2e5e9; --line-strong: #d1d5db; --border: #d1d5db; --hairline: #e5e7eb;
+        --accent: #0ea5e9; --accent-text: #0284c7; --accent-soft: rgba(14, 165, 233, 0.08);
+        --pill-blue: #e0f2fe; --pill-blue-text: #0369a1;
+        --pill-green: #dcfce7; --pill-green-text: #15803d;
+        --pill-yellow: #fef3c7; --pill-yellow-text: #b45309;
+        --pill-grey: #f3f4f6; --pill-grey-text: #4b5563;
+        --ok: #16a34a; --warn: #d97706; --bad: #dc2626;
+        --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        --font-serif: Georgia, "Times New Roman", serif;
+        --font-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+        --measure: 680px; --wide: 960px; --radius: 6px;
+        --gap-xs: 6px; --gap-sm: 10px; --gap-md: 18px; --gap-lg: 28px; --gap-xl: 48px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #050505; --surface: #0b0d0f; --surface-2: #121519;
+          --fg: #e9ecef; --fg-strong: #ffffff; --muted: #767f89; --faint: #4b545d;
+          --line: #1d2228; --line-strong: #2b333c; --border: #1d2228; --hairline: #151a1f;
+          --accent: #4dd2ff; --accent-text: #4dd2ff; --accent-soft: rgba(77, 210, 255, 0.08);
+          --pill-blue: rgba(77, 210, 255, 0.1); --pill-blue-text: #4dd2ff;
+          --pill-green: rgba(127, 211, 155, 0.1); --pill-green-text: #7fd39b;
+          --pill-yellow: rgba(255, 181, 71, 0.1); --pill-yellow-text: #ffb547;
+          --pill-grey: rgba(118, 127, 137, 0.12); --pill-grey-text: #767f89;
+          --ok: #7fd39b; --warn: #ffb547; --bad: #ff7a7a;
+        }
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+      body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); font-size: 16px; line-height: 1.65; -webkit-font-smoothing: antialiased; }
+      a { color: var(--accent-text); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+      .rail { position: sticky; top: 0; z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
+      .rail .wrap { max-width: var(--wide); margin: 0 auto; padding: 0 var(--gap-md); display: flex; align-items: center; gap: var(--gap-md); height: 54px; }
+      .brand { font-weight: 700; letter-spacing: -0.02em; font-size: 15px; color: var(--fg-strong); }
+      .brand span { color: var(--faint); font-weight: 400; }
+      .rail nav { margin-left: auto; display: flex; gap: var(--gap-md); font-size: 13.5px; color: var(--muted); }
+      .rail nav a { color: var(--muted); }
+      .rail nav a:hover { color: var(--fg); }
+      @media (max-width: 720px) { .rail nav { display: none; } }
+
+      .hero { padding: var(--gap-xl) 0 var(--gap-lg); border-bottom: 1px solid var(--line); }
+      .hero .wrap { max-width: var(--measure); margin: 0 auto; padding: 0 var(--gap-md); }
+      .hero h1 { font-size: clamp(34px, 5vw, 48px); line-height: 1.08; letter-spacing: -0.03em; font-weight: 700; margin: 0 0 var(--gap-md); color: var(--fg-strong); max-width: 22ch; }
+      .lede { font-size: 18px; line-height: 1.7; color: var(--muted); max-width: var(--measure); margin: 0 0 var(--gap-sm); }
+      .lede strong { color: var(--fg); font-weight: 600; }
+      .meta { display: flex; gap: var(--gap-sm); flex-wrap: wrap; font-size: 13px; color: var(--faint); margin-top: var(--gap-md); }
+      .cta-row { display: flex; gap: var(--gap-sm); flex-wrap: wrap; margin-top: var(--gap-lg); }
+      .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: var(--radius); font-size: 14px; font-weight: 600; border: 1px solid var(--border); color: var(--fg-strong); }
+      .btn:hover { text-decoration: none; border-color: var(--line-strong); background: var(--surface); }
+      .btn-primary { background: var(--accent); border-color: var(--accent); color: #04121a; }
+      .btn-primary:hover { background: var(--accent-text); border-color: var(--accent-text); color: #04121a; }
+
+      .wrap { max-width: var(--measure); margin: 0 auto; padding: 0 var(--gap-md); }
+      .wide { max-width: var(--wide); margin: 0 auto; padding: 0 var(--gap-md); }
+      article { padding: var(--gap-xl) 0; }
+      article > section { margin-bottom: var(--gap-xl); }
+
+      h2 { font-size: clamp(26px, 3.4vw, 32px); line-height: 1.14; letter-spacing: -0.025em; font-weight: 700; margin: var(--gap-xl) 0 var(--gap-md); color: var(--fg-strong); max-width: 26ch; }
+      h3 { font-size: 15px; font-weight: 600; margin: var(--gap-lg) 0 var(--gap-xs); color: var(--fg-strong); letter-spacing: -0.01em; }
+      p { font-size: 16px; line-height: 1.75; color: var(--fg); margin: 0 0 var(--gap-md); max-width: var(--measure); }
+      p b, p strong { color: var(--fg-strong); font-weight: 600; }
+      ul, ol { margin: 0 0 var(--gap-md) var(--gap-md); color: var(--fg); }
+      li { margin: var(--gap-xs) 0; }
+
+      .aside { border-left: 3px solid var(--line-strong); padding: 2px 0 2px var(--gap-md); margin: var(--gap-lg) 0; font-size: 15.5px; color: var(--muted); max-width: 60ch; }
+      .aside b { color: var(--fg); font-weight: 600; }
+
+      .callout { border: 1px solid var(--border); border-left: 3px solid var(--accent); background: var(--surface); padding: var(--gap-md); border-radius: var(--radius); margin: 0 0 var(--gap-md); }
+      .callout p:last-child { margin-bottom: 0; }
+      .tip { border-left: 3px solid var(--ok); background: var(--surface); padding: var(--gap-sm) var(--gap-md); border-radius: 0 var(--radius) var(--radius) 0; margin: 0 0 var(--gap-md); }
+      .tip p:last-child { margin-bottom: 0; }
+
+      table { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: var(--gap-md); border: 1px solid var(--border); background: var(--surface); }
+      th, td { padding: var(--gap-sm); text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; background: var(--surface-2); border-bottom: 1px solid var(--line-strong); }
+      tr:last-child td { border-bottom: 0; }
+      tr:hover td { background: var(--accent-soft); }
+      td code { font-size: 12px; }
+
+      code { background: var(--surface-2); padding: 2px 5px; border-radius: 4px; border: 1px solid var(--hairline); color: var(--fg-strong); }
+      pre { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--gap-md); overflow-x: auto; font-size: 13px; line-height: 1.7; margin: 0 0 var(--gap-md); color: var(--fg); }
+      pre code { background: transparent; border: none; padding: 0; }
+
+      .pill, .tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 500; letter-spacing: 0.02em; }
+      .pill-blue { background: var(--pill-blue); color: var(--pill-blue-text); }
+      .pill-green { background: var(--pill-green); color: var(--pill-green-text); }
+      .pill-yellow { background: var(--pill-yellow); color: var(--pill-yellow-text); }
+      .pill-grey { background: var(--pill-grey); color: var(--pill-grey-text); }
+
+      /* mock console panel -- an illustration of Wrangler's crew sidebar, not a screenshot */
+      .mock { background: var(--surface); border: 1px solid var(--border); margin: var(--gap-lg) 0 var(--gap-sm); color: var(--fg); font-size: 13px; line-height: 1.55; overflow: hidden; border-radius: var(--radius); }
+      .mock-bar { display: flex; align-items: center; gap: var(--gap-sm); padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); font-size: 11.5px; color: var(--faint); font-family: var(--font-mono); flex-wrap: wrap; }
+      .mock-bar .mode { color: var(--accent-text); }
+      .mock-bar .right { margin-left: auto; color: var(--faint); }
+      .mock-body { padding: var(--gap-md) 14px; }
+      .agent-row { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+      .agent-row:last-child { border-bottom: none; }
+      .agent-row .name { font-weight: 600; }
+      .agent-row .state { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); }
+      .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+      .dot.run { background: var(--ok); }
+      .dot.sleep { background: var(--accent); opacity: 0.6; }
+      .dot.block { background: var(--bad); }
+      .cap { font-size: 13px; color: var(--faint); margin: 0 0 var(--gap-lg); max-width: 64ch; }
+
+      footer { border-top: 1px solid var(--line); padding: var(--gap-lg) 0 var(--gap-xl); color: var(--faint); font-size: 13px; }
+      footer .wrap { display: flex; justify-content: space-between; gap: var(--gap-md); flex-wrap: wrap; }
+
+      @media (max-width: 640px) {
+        .hero h1 { font-size: 30px; }
+        h2 { font-size: 24px; }
+      }
+    </style>
+  </head>
+  <body>
+
+    <header class="rail">
+      <div class="wrap">
+        <div class="brand">crew <span>+ Wrangler</span></div>
+        <nav>
+          <a href="#quickstart">Quick start</a>
+          <a href="#how">How it works</a>
+          <a href="#views">Views</a>
+          <a href="https://github.com/roninito/crew">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <div class="hero">
+      <div class="wrap">
+        <h1>A documentation-driven agent team for your Obsidian vault</h1>
+        <p class="lede">
+          <strong>crew</strong> is a standalone Bun CLI and server: the manager and central comms for a team of AI agents. <strong>Wrangler</strong> is the Obsidian plugin that starts it, and shows the team as views inside your vault. Tasks, verdicts, and traces are the documentation -- written as the work happens, so it can't drift from what was built.
+        </p>
+        <div class="meta">
+          <span class="pill pill-blue">macOS · Linux · Windows</span>
+          <span class="pill pill-green">Open source</span>
+          <span class="pill pill-yellow">Public beta</span>
+        </div>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="#quickstart">Install Wrangler</a>
+          <a class="btn" href="https://github.com/roninito/crew">View on GitHub</a>
+          <a class="btn" href="https://github.com/roninito/crew/blob/main/docs/SPEC.md">Read the spec</a>
+        </div>
+      </div>
+    </div>
+
+    <article class="wrap">
+
+      <section id="quickstart">
+        <h2>Quick start</h2>
+        <p>Wrangler isn't in the Obsidian community plugin directory yet, so install it with one command:</p>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/roninito/crew/main/scripts/install-wrangler.sh | bash -s -- "/path/to/your/vault"</code></pre>
+        <p>Then open Obsidian, go to <b>Settings → Community plugins</b>, and enable <b>Wrangler</b>. That's the whole install -- no Bun, no source checkout. The first time it's enabled in a vault, Wrangler:</p>
+        <ul>
+          <li>creates the <code>crew/</code> folder layout, templates, wiki, and skill</li>
+          <li>generates the API token in <code>crew/crew.md</code></li>
+          <li>downloads the right <code>crew</code> binary for your OS from GitHub Releases</li>
+          <li>starts the server</li>
+        </ul>
+        <div class="tip"><p>Prefer to have a copilot do this for you? Point it at the <a href="https://raw.githubusercontent.com/roninito/crew/main/skill/wrangler-setup/SKILL.md">wrangler-setup skill</a> and ask it to set up crew in your vault.</p></div>
+      </section>
+
+      <section id="how">
+        <h2>How the pieces talk</h2>
+        <p>crew does all the work, so the team keeps running even when Obsidian is closed. Wrangler gives it a face inside Obsidian.</p>
+        <table>
+          <tr><th>Piece</th><th>What it is</th><th>Responsibilities</th></tr>
+          <tr><td>crew</td><td>Bun CLI + long-running server</td><td>State broker, event bus, scheduler, agent launcher, job runner, locks, budgets, verification, traces</td></tr>
+          <tr><td>Wrangler</td><td>Obsidian plugin</td><td>Sets up <code>crew/</code> on first enable, starts or attaches to <code>crew serve</code>, renders views, sends UI actions to crew</td></tr>
+          <tr><td>crew-manager skill</td><td>A skill folder in the vault</td><td>Teaches your copilot how to run the team through crew</td></tr>
+        </table>
+        <p>Everything is files in <code>crew/</code> inside the vault. crew is the only writer of shared state -- agents, Wrangler, your copilot, and other tools go through the CLI or its local HTTP API.</p>
+      </section>
+
+      <section id="views">
+        <h2>What you see</h2>
+        <p>Agent and task state is always shown with a shape and a word, never color alone.</p>
+        <div class="mock">
+          <div class="mock-bar"><span class="mode">Wrangler</span><span>Crew Server</span><span class="right">port 7717</span></div>
+          <div class="mock-body">
+            <div class="agent-row"><span class="name">blender</span><span class="state"><span class="dot run"></span>running</span></div>
+            <div class="agent-row"><span class="name">verifier</span><span class="state"><span class="dot sleep"></span>sleeping</span></div>
+            <div class="agent-row"><span class="name">unity-bridge</span><span class="state"><span class="dot block"></span>blocked</span></div>
+          </div>
+        </div>
+        <p class="cap">An illustration of the crew sidebar, not a screenshot.</p>
+
+        <table>
+          <tr><th>View</th><th>Shows</th></tr>
+          <tr><td>Crew sidebar</td><td>Each agent: status, current task, last log line, runner and model, spend today</td></tr>
+          <tr><td>Board</td><td>Tasks by column, Inbox through Done, with owner and claim timer</td></tr>
+          <tr><td>Review inbox</td><td>Escalated work and sampled approvals waiting on you</td></tr>
+          <tr><td>Blackboard feed</td><td>Posts and events on one timeline</td></tr>
+          <tr><td>Jobs</td><td>Background jobs agents have started, running or finished</td></tr>
+        </table>
+      </section>
+
+      <section id="principles">
+        <h2>Principles</h2>
+        <div class="aside"><b>crew is the only writer of shared state.</b> Agents, Wrangler, your copilot, and outside tools all go through crew to claim, post, emit, and update. This prevents overlapping writes.</div>
+        <div class="aside"><b>Trust by default, verify the output.</b> Agents act without asking. Their work lands in isolated work trees and is approved by a verifier agent, and by you when escalated.</div>
+        <div class="aside"><b>Long work runs as scripts, not sessions.</b> Agents start jobs and sleep until an event wakes them.</div>
+        <div class="aside"><b>Tool-agnostic.</b> Each agent names its own runner (Claude Code, opencode, others) and model.</div>
+      </section>
+
+      <section id="status">
+        <h2>Where this stands</h2>
+        <div class="callout">
+          <p>This is a public beta getting real-world use right now. The core loop -- install, enable, spawn an agent, create a task, watch it work -- is solid. It isn't yet submitted to Obsidian's official community plugin directory; until then, install it with the script above.</p>
+        </div>
+      </section>
+
+    </article>
+
+    <footer>
+      <div class="wrap">
+        <span>crew + Wrangler</span>
+        <span><a href="https://github.com/roninito/crew">github.com/roninito/crew</a> · <a href="https://github.com/roninito/crew/releases">Releases</a> · <a href="https://github.com/roninito/crew/blob/main/docs/SPEC.md">Spec</a></span>
+      </div>
+    </footer>
+
+  </body>
+</html>

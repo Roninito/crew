@@ -1,6 +1,6 @@
 # crew + Wrangler
 
-A documentation-driven agent team for an Obsidian vault.
+A documentation-driven agent team for an Obsidian vault. [Website](https://roninito.github.io/crew/) · [Releases](https://github.com/roninito/crew/releases)
 
 - **crew** (`packages/crew`) is a standalone Bun CLI and server: the team's manager and central comms. It owns tasks, claims, the blackboard, events, jobs, locks, budgets, verification and traces. It runs with or without Obsidian.
 - **Wrangler** (`packages/wrangler`) is the Obsidian plugin. It starts or attaches to the crew server for the vault and shows the team as views: crew sidebar, board, review inbox, blackboard feed, jobs, and a status bar.

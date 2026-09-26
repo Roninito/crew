@@ -1114,9 +1114,10 @@ class WranglerSettingTab extends PluginSettingTab {
     intro.createEl("p", {
       text: "Workflow: a task needs at least one acceptance criterion to leave Inbox and become Ready. An enabled agent whose capabilities match claims it, works in an isolated copy, then moves it to Verify. A verifier approves, rejects, or escalates to Review inbox for you. Tasks made from the board or command palette go through the same crew task new command a terminal would run -- they're just as valid.",
     });
-    intro.createEl("p", {
-      text: "More detail: crew/board.md and crew/wiki/index.md in this vault, or the crew-manager skill at crew/skills/crew-manager/SKILL.md if your copilot reads it.",
-    });
+    const moreDetail = intro.createEl("p");
+    moreDetail.appendText("More detail: crew/board.md and crew/wiki/index.md in this vault, the crew-manager skill at crew/skills/crew-manager/SKILL.md if your copilot reads it, or the full site: ");
+    moreDetail.createEl("a", { text: "roninito.github.io/crew", href: "https://roninito.github.io/crew/" });
+    moreDetail.appendText(".");
 
     new Setting(el)
       .setName("Wrangler version")
