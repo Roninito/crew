@@ -526,8 +526,11 @@ export default class WranglerPlugin extends Plugin {
       for (const leaf of this.app.workspace.getLeavesOfType(type)) void (leaf.view as CrewView).render();
   }
 
-  setStatusText(t: string): void {
-    this.statusEl?.setText(t);
+  setStatusText(t: string, live = false): void {
+    if (!this.statusEl) return;
+    this.statusEl.empty();
+    this.statusEl.createSpan({ cls: `crew-dot-mini${live ? " is-running" : ""}`, text: "●" });
+    this.statusEl.appendText(t);
   }
 
   renderStatusBar(): void {
@@ -536,7 +539,7 @@ export default class WranglerPlugin extends Plugin {
     const running = s.agents.filter((a) => a.state === "running").length;
     const sleeping = s.agents.filter((a) => a.state === "sleeping").length;
     const paused = s.paused ? "paused, " : "";
-    this.setStatusText(`crew: ${paused}${running} running, ${sleeping} sleeping, ${s.review} to review, $${s.spend.toFixed(2)} today`);
+    this.setStatusText(`crew: ${paused}${running} running, ${sleeping} sleeping, ${s.review} to review, $${s.spend.toFixed(2)} today`, running > 0);
   }
 
   async openView(type: string, where: "right" | "tab"): Promise<void> {
@@ -652,7 +655,9 @@ class CrewSidebarView extends CrewView {
     el.empty();
     const s = this.plugin.status;
     const server = el.createDiv({ cls: "crew-server" });
-    server.createEl("h4", { text: "Server" });
+    const heading = server.createEl("h4");
+    heading.createSpan({ cls: "crew-kicker", text: "Wrangler:" });
+    heading.appendText(" Crew Server");
     if (!this.plugin.online || !s) {
       this.offline(el);
       return;
@@ -675,7 +680,9 @@ class CrewSidebarView extends CrewView {
       const card = el.createDiv({ cls: `crew-agent is-${a.state}` });
       const top = card.createDiv({ cls: "crew-agent-top" });
       top.createSpan({ cls: "crew-agent-name", text: a.name });
-      top.createSpan({ cls: "crew-state", text: `${STATE_MARK[a.state] ?? ""} ${a.state}` });
+      const state = top.createSpan({ cls: `crew-state is-${a.state}` });
+      state.createSpan({ cls: "crew-dot", text: STATE_MARK[a.state] ?? "" });
+      state.appendText(` ${a.state}`);
       const meta = card.createDiv({ cls: "crew-muted" });
       meta.setText(`${a.runner}/${a.model || "-"}, $${a.spend.toFixed(2)} today`);
       if (a.task) {

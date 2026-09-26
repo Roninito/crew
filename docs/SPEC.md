@@ -272,6 +272,8 @@ These are the only controls that stop work. They protect machines and money, not
 
 The views answer three questions at a glance: what's running, what's stuck, and what needs me.
 
+**Visual identity.** Wrangler keeps its own look across any Obsidian theme, the way plugins like Excalidraw or Kanban do -- `styles.css` defines its own `--crew-*` tokens (palette, type, motion) rather than only inheriting Obsidian's theme variables, following the vault's light/dark toggle via `body.theme-light`/`body.theme-dark` but not a specific community theme's exact colors. Agent and job state is always shown with a shape and a word, never color alone; a status dot adds a subtle continuous pulse for `running`/`sleeping` agents (`prefers-reduced-motion` disables it, leaving color and shape). `packages/wrangler/plans/animation-plans/` holds the motion audit and rationale for what does and doesn't animate -- notably, the periodic view refresh and status-bar text updates are deliberately not animated, since they repeat every few seconds and would be noise, not polish.
+
 | View | Where | Shows | Main actions |
 | --- | --- | --- | --- |
 | Crew sidebar | Right pane | Each agent: status, current task, last log line, runner and model, spend today | Run now, pause, stop, open agent.md |
