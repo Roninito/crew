@@ -1085,6 +1085,32 @@ class WranglerSettingTab extends PluginSettingTab {
   display(): void {
     const el = this.containerEl;
     el.empty();
+
+    new Setting(el).setName("How to use Wrangler").setHeading();
+    const intro = el.createDiv({ cls: "crew-muted" });
+    intro.createEl("p", {
+      text: "Wrangler runs crew, a team of AI agents for this vault, and shows it as views. Open them from the command palette (Cmd/Ctrl+P), search \"Wrangler\":",
+    });
+    const list = intro.createEl("ul");
+    const row = (cmd: string, desc: string) => {
+      const li = list.createEl("li");
+      li.createEl("strong", { text: cmd });
+      li.appendText(` -- ${desc}`);
+    };
+    row("Open crew sidebar", "agents, their status and spend, quick actions (also the ribbon icon)");
+    row("Open board", "tasks by column, Inbox through Done; drag cards or use New task");
+    row("Open review inbox", "escalated work and sampled approvals waiting on you (also the status bar)");
+    row("Open blackboard feed", "the team's shared timeline; post a message from here too");
+    row("Open jobs", "background jobs agents have started, running or finished");
+    row("Create task / Spawn agent from template / Broadcast event", "same forms as the sidebar and board buttons");
+    row("Kill switch: stop every session and job", "pauses everything; crew resume in a terminal (or the sidebar) undoes it");
+    intro.createEl("p", {
+      text: "Workflow: a task needs at least one acceptance criterion to leave Inbox and become Ready. An enabled agent whose capabilities match claims it, works in an isolated copy, then moves it to Verify. A verifier approves, rejects, or escalates to Review inbox for you. Tasks made from the board or command palette go through the same crew task new command a terminal would run -- they're just as valid.",
+    });
+    intro.createEl("p", {
+      text: "More detail: crew/board.md and crew/wiki/index.md in this vault, or the crew-manager skill at crew/skills/crew-manager/SKILL.md if your copilot reads it.",
+    });
+
     new Setting(el)
       .setName("Wrangler version")
       .setDesc(`Installed: v${this.plugin.manifest.version}`)
