@@ -103,6 +103,16 @@ printf '\n## new entry\nadded by tester\n' >> "$WT3/Blog.md"
 [ -f "$VAULT/Blog.md" ] && [ ! -d "$VAULT/Blog.md" ] && pass "approval copies the target file back as a file, not a directory" || fail "Blog.md is a directory after approval"
 grep -q "keep me" "$VAULT/Blog.md" && grep -q "added by tester" "$VAULT/Blog.md" && pass "approval preserves prior content and adds the new entry" || fail "Blog.md is missing prior or new content"
 
+# Some agents write straight to the live target instead of the staging copy (a singleton file,
+# by the agent's own design) -- the work tree then has no target file at all, and approval must
+# recognize "already at the real location" as success, not a missing-file error.
+"${CREW[@]}" task new "direct write" --needs demo --type docs --target Direct.md --accept "x" --check "true" >/dev/null
+"${CREW[@]}" claim T-0004 --as tester >/dev/null
+echo "written straight to the vault, not the work tree" > "$VAULT/Direct.md"
+"${CREW[@]}" task update T-0004 --status verify --as tester --note "done" >/dev/null
+"${CREW[@]}" verdict T-0004 approve >/dev/null && "${CREW[@]}" task list --status done | grep -q T-0004 && pass "approval succeeds when the worker wrote the target directly" || fail "approval of a directly-written target failed"
+grep -q "written straight to the vault" "$VAULT/Direct.md" && pass "directly-written target is untouched by approval" || fail "Direct.md content changed or vanished"
+
 # Server: API, auth, and event-driven wakes.
 bun "$ROOT/packages/crew/bin/crew.ts" serve >"$TMP/server.log" 2>&1 &
 SERVER_PID=$!

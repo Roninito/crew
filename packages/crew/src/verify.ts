@@ -76,10 +76,17 @@ function applyApproval(c: Crew, t: Task): string {
     // tree is a staging area that can hold notes, scratch files, or job output alongside it.
     const dest = resolve(c.vault, c.expand(t.target));
     const src = join(t.worktree, basename(t.target));
-    if (!existsSync(src)) throw new CrewError(`Work tree has no ${basename(t.target)} -- nothing to copy to ${t.target}.`);
-    mkdirSync(dirname(dest), { recursive: true });
-    cpSync(src, dest, { recursive: true });
-    return `copied ${basename(t.target)} to ${dest}`;
+    if (existsSync(src)) {
+      mkdirSync(dirname(dest), { recursive: true });
+      cpSync(src, dest, { recursive: true });
+      return `copied ${basename(t.target)} to ${dest}`;
+    }
+    // Some agents (by their own agent.md's choice) write straight to the live target instead of
+    // working in the isolated staging copy -- a singleton file like a daily log doesn't always
+    // benefit from the isolation a git worktree gives code. If the target already exists at its
+    // real location, that's success, not a missing file: nothing to copy back, it's already there.
+    if (existsSync(dest)) return `${basename(t.target)} already at ${dest} (worker wrote it directly, not through the work tree)`;
+    throw new CrewError(`Neither the work tree nor ${t.target} has ${basename(t.target)} -- nothing to approve.`);
   }
   return "approved in place (no target set)";
 }
