@@ -10,7 +10,13 @@ The full design is in [docs/SPEC.md](docs/SPEC.md).
 
 ## Quick start
 
-Download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/roninito/crew/releases/latest) into `<vault>/.obsidian/plugins/wrangler/`, then enable **Wrangler** in Obsidian (Settings, Community plugins). No Bun install, no source checkout: the first time it's enabled in a vault, Wrangler creates the `crew/` folder layout, generates the API token, and downloads the right `crew` binary for your OS from GitHub Releases on its own, then starts the server. That's the whole install.
+Wrangler isn't in the Obsidian community plugin directory yet, so install it with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/roninito/crew/main/scripts/install-wrangler.sh | bash -s -- ~/Vaults/Studio
+```
+
+Then enable **Wrangler** in Obsidian (Settings, Community plugins). No Bun install, no source checkout: the first time it's enabled in a vault, Wrangler creates the `crew/` folder layout, generates the API token, and downloads the right `crew` binary for your OS from GitHub Releases on its own, then starts the server. That's the whole install.
 
 To keep agents working with Obsidian closed, run crew as a service instead:
 
@@ -48,6 +54,7 @@ With the server running, the task's `task.ready` event wakes the blender agent.
 | `scripts/init-vault.sh <vault> [--assets dir]` | Creates the crew folder layout, token, templates, wiki and skill in a vault |
 | `scripts/install-plugin.sh <vault>` | Builds Wrangler and installs it into the vault |
 | `scripts/service.sh install\|uninstall\|status <vault>` | Runs crew as a launchd or systemd service |
+| `scripts/install-wrangler.sh <vault>` | Downloads Wrangler's latest release into a vault. Standalone — works via `curl \| bash`, no checkout needed |
 | `scripts/new-wiki-page.sh <vault> <path> "<title>"` | Creates a wiki page |
 | `scripts/smoke-test.sh` | End-to-end test in a throwaway vault, using the `dryrun` runner |
 | `scripts/build-release.sh` | Builds crew binaries for every platform and the Wrangler plugin bundle into `dist/` |
