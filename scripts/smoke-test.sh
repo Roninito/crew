@@ -46,6 +46,17 @@ perl -0pi -e 's/\{\{BLANK:.*?\}\}/filled/gs' "$A"
 "${CREW[@]}" agent lint tester >/dev/null && pass "lint passes after filling"
 "${CREW[@]}" agent enable tester >/dev/null && pass "agent enabled"
 
+# Agent set: changes only the fields given, in place, without disturbing anything else in the file.
+"${CREW[@]}" agent set tester --runner opencode --model "opencode/claude-sonnet-5" >/dev/null
+grep -q "^runner: opencode$" "$A" && grep -q "^model: opencode/claude-sonnet-5$" "$A" && pass "agent set updates runner and model" || fail "agent set didn't update runner/model"
+grep -q "^enabled: true$" "$A" && grep -q "^can: \[demo\]$" "$A" && pass "agent set leaves the rest of the file untouched" || fail "agent set disturbed unrelated fields"
+"${CREW[@]}" agent set tester >/dev/null 2>&1 && fail "agent set with nothing to change should error" || pass "agent set refuses a no-op call"
+# Revert: later checks wake tester for real sessions and need the free, always-available dryrun
+# runner -- opencode won't be installed on CI, and a session launch would silently emit nothing
+# (agent.error only, no session.started) rather than fail loudly, so this would misreport as
+# "no wake" far below instead of pointing at its actual cause here.
+"${CREW[@]}" agent set tester --runner dryrun --model none >/dev/null
+
 # Agent removal: refused while enabled, deletes the folder once disabled.
 "${CREW[@]}" agent new scratch --template worker --runner dryrun --model none --can demo >/dev/null
 perl -0pi -e 's/\{\{BLANK:.*?\}\}/filled/gs' "$VAULT/crew/agents/scratch/agent.md"

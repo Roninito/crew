@@ -591,6 +591,7 @@ class CrewSidebarView extends CrewView {
         btn(acts, "Run now", () => this.plugin.run(["wake", a.name], true));
         btn(acts, "Pause", () => this.plugin.run(["agent", "disable", a.name], true));
       } else btn(acts, "Enable", () => this.plugin.run(["agent", "enable", a.name], true));
+      btn(acts, "Edit", async () => new EditAgentModal(this.app, this.plugin, a.name, a.runner, a.model).open());
       btn(acts, "Open", async () => this.plugin.openNote(`crew/agents/${a.name}/agent.md`));
     }
   }
@@ -872,86 +873,137 @@ class NewTaskModal extends Modal {
   }
 }
 
+interface RunnerModelPicker {
+  getRunner(): string;
+  getModel(): string;
+  /** The detected-runner info for whatever's currently selected, if it's a known one. */
+  getInfo(): DetectedRunnerLike | undefined;
+}
+type DetectedRunnerLike = { id: string; label: string; models: string[] | null; configSnippet: string };
+
+/**
+ * Shared by NewAgentModal (creating) and EditAgentModal (changing an existing agent's runner/model):
+ * detects installed AI CLIs, offers a live model list per runner where one exists, and falls back
+ * to free text otherwise. `initialRunner`/`initialModel` seed the fields (both blank for a new agent).
+ */
+async function buildRunnerModelPicker(
+  container: HTMLElement,
+  plugin: WranglerPlugin,
+  initialRunner: string,
+  initialModel: string,
+): Promise<RunnerModelPicker> {
+  const runnerSetting = new Setting(container).setName("Runner").setDesc("Detecting installed AI tools...");
+  const modelContainer = container.createDiv();
+  const otherContainer = container.createDiv();
+
+  const [configured, detected] = await Promise.all([plugin.configuredRunners(), detectRunners()]);
+  const byId = new Map(detected.map((r) => [r.id, r]));
+  const v = { runner: initialRunner || "dryrun", model: initialModel };
+
+  const renderModelField = () => {
+    modelContainer.empty();
+    const info = byId.get(v.runner);
+    if (info?.models?.length) {
+      if (!info.models.includes(v.model)) v.model = info.models[0]!;
+      new Setting(modelContainer).setName("Model").addDropdown((d) => {
+        const opts: Record<string, string> = {};
+        for (const m of info.models!) opts[m] = m;
+        d.addOptions(opts).setValue(v.model).onChange((x) => (v.model = x));
+      });
+    } else {
+      new Setting(modelContainer)
+        .setName("Model")
+        .setDesc(v.runner === "dryrun" ? "Not used by dryrun." : "No known model list for this runner -- type one.")
+        .addText((t) => t.setValue(v.model).setPlaceholder("e.g. sonnet, gpt-5").onChange((x) => (v.model = x)));
+    }
+  };
+  const renderOtherField = () => {
+    otherContainer.empty();
+    if (v.runner !== "__other") return;
+    v.runner = "";
+    new Setting(otherContainer)
+      .setName("Custom runner")
+      .setDesc("Must match a key under runners: in crew/crew.md.")
+      .addText((t) => t.setValue(initialRunner).onChange((x) => (v.runner = x)));
+  };
+
+  const runnerOptions: Record<string, string> = { dryrun: "Testing (dryrun)" };
+  for (const r of detected) runnerOptions[r.id] = configured.has(r.id) ? r.label : `${r.label} (not in crew.md yet)`;
+  if (initialRunner && !runnerOptions[initialRunner]) runnerOptions[initialRunner] = `${initialRunner} (current)`;
+  runnerOptions.__other = "Other (type manually)";
+  runnerSetting.setDesc(detected.length ? "" : "No known AI CLIs found on PATH. Pick dryrun for testing, or type a custom runner.");
+  runnerSetting.addDropdown((d) =>
+    d.addOptions(runnerOptions).setValue(v.runner).onChange((x) => {
+      v.runner = x;
+      renderModelField();
+      renderOtherField();
+    }),
+  );
+  renderModelField();
+
+  return { getRunner: () => v.runner, getModel: () => v.model, getInfo: () => byId.get(v.runner) };
+}
+
+function warnIfRunnerUnconfigured(app: App, runner: string, info: DetectedRunnerLike | undefined, configured: Set<string>): void {
+  if (!info || configured.has(runner)) return;
+  new OutputModal(
+    app,
+    `Add "${runner}" to crew.md first`,
+    `crew/crew.md has no "${runner}" runner yet, so this agent can't start sessions until you add one.\n\n` +
+      `Suggested, under runners: in crew/crew.md --\n\n${info.configSnippet}\n\n` +
+      `Review it -- especially any approval/sandbox flags -- before saving.`,
+  ).open();
+}
+
 class NewAgentModal extends Modal {
   constructor(app: App, private plugin: WranglerPlugin) {
     super(app);
   }
   async onOpen(): Promise<void> {
     this.titleEl.setText("Spawn agent");
-    const v = { name: "", template: "worker", runner: "dryrun", model: "", can: "" };
+    const v = { name: "", template: "worker", can: "" };
     new Setting(this.contentEl).setName("Name").setDesc("Lowercase, digits and dashes").addText((t) => t.onChange((x) => (v.name = x)));
     new Setting(this.contentEl).setName("Template").addDropdown((d) =>
       d.addOptions({ worker: "Worker", bridge: "Bridge", verifier: "Verifier", planner: "Planner", watcher: "Watcher", scout: "Scout" }).setValue("worker").onChange((x) => (v.template = x)),
     );
 
-    const runnerSetting = new Setting(this.contentEl).setName("Runner").setDesc("Detecting installed AI tools...");
-    const modelContainer = this.contentEl.createDiv();
-    const otherContainer = this.contentEl.createDiv();
-
-    const [configured, detected] = await Promise.all([this.plugin.configuredRunners(), detectRunners()]);
-    const byId = new Map(detected.map((r) => [r.id, r]));
-
-    const renderModelField = () => {
-      modelContainer.empty();
-      const info = byId.get(v.runner);
-      if (info?.models?.length) {
-        v.model = info.models[0]!;
-        new Setting(modelContainer).setName("Model").addDropdown((d) => {
-          const opts: Record<string, string> = {};
-          for (const m of info.models!) opts[m] = m;
-          d.addOptions(opts).setValue(v.model).onChange((x) => (v.model = x));
-        });
-      } else {
-        v.model = "";
-        new Setting(modelContainer)
-          .setName("Model")
-          .setDesc(v.runner === "dryrun" ? "Not used by dryrun." : "No known model list for this runner -- type one.")
-          .addText((t) => t.setPlaceholder("e.g. sonnet, gpt-5").onChange((x) => (v.model = x)));
-      }
-    };
-    const renderOtherField = () => {
-      otherContainer.empty();
-      if (v.runner !== "__other") return;
-      v.runner = "";
-      new Setting(otherContainer)
-        .setName("Custom runner")
-        .setDesc("Must match a key under runners: in crew/crew.md.")
-        .addText((t) => t.onChange((x) => (v.runner = x)));
-    };
-
-    const runnerOptions: Record<string, string> = { dryrun: "Testing (dryrun)" };
-    for (const r of detected) runnerOptions[r.id] = configured.has(r.id) ? r.label : `${r.label} (not in crew.md yet)`;
-    runnerOptions.__other = "Other (type manually)";
-    runnerSetting.setDesc(detected.length ? "" : "No known AI CLIs found on PATH. Pick dryrun for testing, or type a custom runner.");
-    runnerSetting.addDropdown((d) =>
-      d.addOptions(runnerOptions).setValue("dryrun").onChange((x) => {
-        v.runner = x;
-        renderModelField();
-        renderOtherField();
-      }),
-    );
-    renderModelField();
+    const picker = await buildRunnerModelPicker(this.contentEl, this.plugin, "", "");
+    const configured = await this.plugin.configuredRunners();
 
     new Setting(this.contentEl).setName("Capabilities").setDesc("Comma separated, matched against task needs").addText((t) => t.onChange((x) => (v.can = x)));
     this.contentEl.createEl("p", { cls: "crew-muted", text: "The agent starts disabled. Fill the blanks in its agent.md, then enable it from the crew sidebar." });
     const row = this.contentEl.createDiv({ cls: "crew-actions" });
     btn(row, "Spawn agent", async () => {
       if (!v.name.trim()) return new Notice("Give the agent a name.");
-      if (!v.runner.trim()) return new Notice("Pick or type a runner.");
-      const argv = ["agent", "new", v.name.trim(), "--template", v.template, "--runner", v.runner, "--can", v.can];
-      if (v.model.trim()) argv.push("--model", v.model.trim());
+      const runner = picker.getRunner();
+      const model = picker.getModel();
+      if (!runner.trim()) return new Notice("Pick or type a runner.");
+      const argv = ["agent", "new", v.name.trim(), "--template", v.template, "--runner", runner, "--can", v.can];
+      if (model.trim()) argv.push("--model", model.trim());
       const r = await this.plugin.run(argv, true);
       if (r.code === 0) this.plugin.openNote(`crew/agents/${v.name.trim()}/agent.md`);
-      const info = byId.get(v.runner);
-      if (info && !configured.has(v.runner)) {
-        new OutputModal(
-          this.app,
-          `Add "${v.runner}" to crew.md first`,
-          `crew/crew.md has no "${v.runner}" runner yet, so this agent can't start sessions until you add one.\n\n` +
-            `Suggested, under runners: in crew/crew.md --\n\n${info.configSnippet}\n\n` +
-            `Review it -- especially any approval/sandbox flags -- before saving.`,
-        ).open();
-      }
+      warnIfRunnerUnconfigured(this.app, runner, picker.getInfo(), configured);
+      this.close();
+    }, true);
+  }
+}
+
+class EditAgentModal extends Modal {
+  constructor(app: App, private plugin: WranglerPlugin, private agentName: string, private currentRunner: string, private currentModel: string) {
+    super(app);
+  }
+  async onOpen(): Promise<void> {
+    this.titleEl.setText(`Edit ${this.agentName}`);
+    this.contentEl.createEl("p", { cls: "crew-muted", text: `Currently ${this.currentRunner}/${this.currentModel || "-"}.` });
+    const picker = await buildRunnerModelPicker(this.contentEl, this.plugin, this.currentRunner, this.currentModel);
+    const configured = await this.plugin.configuredRunners();
+    const row = this.contentEl.createDiv({ cls: "crew-actions" });
+    btn(row, "Save", async () => {
+      const runner = picker.getRunner();
+      const model = picker.getModel();
+      if (!runner.trim()) return new Notice("Pick or type a runner.");
+      await this.plugin.run(["agent", "set", this.agentName, "--runner", runner, "--model", model], true);
+      warnIfRunnerUnconfigured(this.app, runner, picker.getInfo(), configured);
       this.close();
     }, true);
   }

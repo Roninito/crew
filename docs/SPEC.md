@@ -137,6 +137,8 @@ crew agent enable blender
 3. `crew agent lint` checks the frontmatter schema, runner and model availability, that no blanks remain, and that subscribed events and locks exist. A new agent stays disabled until lint passes. This is a completeness check, not a trust gate.
 4. `crew agent enable` turns it on and posts `agent.created` to the blackboard.
 
+`crew agent set <name> --runner x --model y` changes an existing agent's runner and/or model in place, without touching anything else in its agent.md -- the only way to do this before was hand-editing the YAML frontmatter, which is exactly as error-prone as it sounds for a model name you don't have memorized. Wrangler's sidebar has an **Edit** button per agent that reuses the same runner/model detection the spawn-agent form uses (a live model list where the runner supports one, e.g. `opencode models`) rather than a blank text field.
+
 `crew agent remove <name>` deletes an agent's folder for good. It refuses while the agent is enabled -- `crew agent disable` first -- and doesn't touch tasks the agent claimed; reassign or reclaim those separately.
 
 The crew-manager skill includes `new-agent.sh`, a wrapper the copilot calls with the same arguments.

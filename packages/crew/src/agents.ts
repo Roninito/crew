@@ -6,6 +6,7 @@ import {
   CrewError,
   type Out,
   actorOf,
+  agentLog,
   emit,
   flag,
   join,
@@ -151,6 +152,40 @@ function setEnabled(c: Crew, name: string, on: boolean): void {
     ? raw.replace(/^enabled:\s*(true|false)\s*$/m, `enabled: ${on}`)
     : raw.replace(/^---\n/, `---\nenabled: ${on}\n`);
   writeFileSync(f, next);
+}
+
+// Only touches the one frontmatter line named, leaving everything else in the file -- comments,
+// directives, formatting -- exactly as it was. Same approach as setEnabled above, generalized to
+// any bare scalar field (runner, model): never a full YAML parse-and-rewrite, which would risk
+// reformatting or losing content elsewhere in the file.
+function setScalarField(raw: string, key: string, value: string): string {
+  const line = new RegExp(`^${key}:.*$`, "m");
+  const replacement = `${key}: ${value}`;
+  return line.test(raw) ? raw.replace(line, replacement) : raw.replace(/^---\n/, `---\n${replacement}\n`);
+}
+
+export function agentSet(c: Crew, a: Args, o: Out): void {
+  const name = a._[2];
+  if (!name) throw new CrewError("Usage: crew agent set <name> [--runner x] [--model x]");
+  const f = c.p("agents", name, "agent.md");
+  if (!existsSync(f)) throw new CrewError(`No agent.md for ${name}.`);
+  const runner = flag(a, "runner");
+  const model = flag(a, "model");
+  if (!runner && !model) throw new CrewError("Nothing to change. Pass --runner and/or --model.");
+  let raw = readFileSync(f, "utf8");
+  const changed: string[] = [];
+  if (runner) {
+    raw = setScalarField(raw, "runner", runner);
+    changed.push(`runner=${runner}`);
+  }
+  if (model) {
+    raw = setScalarField(raw, "model", model);
+    changed.push(`model=${model}`);
+  }
+  writeFileSync(f, raw);
+  emit(c, { type: "agent.updated", by: actorOf(a), agent: name, data: { changed } });
+  agentLog(c, name, `updated: ${changed.join(", ")}`);
+  o.say(`${name}: ${changed.join(", ")}.`);
 }
 
 export function agentEnable(c: Crew, a: Args, o: Out, on: boolean): void {
