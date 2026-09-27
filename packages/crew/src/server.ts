@@ -101,6 +101,18 @@ export function createProjectRuntime(c: Crew, opts?: ProjectRuntimeOpts): Projec
       if (n === threshold) anomaly("claims_expiring", ev, `${ev.task} claim expired ${n} times`);
     }
     if (ev.type === "budget.exceeded") anomaly("budget", ev, String(ev.data?.reason ?? ""));
+    // Scout and planner already try to avoid inventing an uncoverable `--needs` tag by accident
+    // (both check `crew agents` first per their own directives) -- but when one lands anyway
+    // (deliberately, as a proposal, or because nothing else fit), nothing used to notice. This is
+    // the fix: the moment a task is created with a need no *enabled* agent's `can` covers, flag it
+    // so planner (subscribed to this event) can retag it or propose the missing capability instead
+    // of it silently sitting in Inbox forever. Checked only at creation, not again at task.ready --
+    // needs don't change between the two for the same task, so a second check would just be noise.
+    if (ev.type === "task.created" && ev.task) {
+      const needs = (ev.data?.needs as string[] | undefined) ?? [];
+      if (needs.length && !listAgents(c).some((ag) => ag.def.enabled && needs.every((n) => (ag.def.can ?? []).includes(n))))
+        emit(c, { type: "task.uncoverable", by: "crew", task: ev.task, data: { needs } });
+    }
     // A session that starts and ends within one tick never shows up as "live" in between, so
     // dispatch()'s launching-cleanup (timeout or live) would otherwise leave it stuck "launching"
     // -- and un-wakeable -- for up to 15s even though it already finished. The event itself is the

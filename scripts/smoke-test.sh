@@ -150,6 +150,16 @@ curl -sf "http://127.0.0.1:$PORT/" | grep -q "<title>crew</title>" && pass "dash
 for i in $(seq 1 20); do grep -q '"session.ended".*"tester"' "$VAULT/crew/events/"*.jsonl && break; sleep 0.5; done
 grep -q '"session.started"' "$VAULT/crew/events/"*.jsonl && pass "task.ready woke the subscribed agent" || { cat "$TMP/server.log"; fail "no wake"; }
 
+# Coverage-gap detection: a task created with a --needs no enabled agent's `can` covers gets
+# flagged, so it doesn't just sit silently unclaimable; a task with a covered need doesn't.
+OUT="$("${CREW[@]}" task new "Needs a capability nobody has" --needs some-bogus-capability)"
+BADID="$(echo "$OUT" | grep -o 'T-[0-9]*' | head -1)"
+COVID="$("${CREW[@]}" task new "Needs a capability tester has" --needs demo | grep -o 'T-[0-9]*' | head -1)"
+for i in $(seq 1 20); do grep -q "\"type\":\"task.uncoverable\".*\"task\":\"$BADID\"" "$VAULT/crew/events/"*.jsonl && break; sleep 0.5; done
+grep -q "\"type\":\"task.uncoverable\".*\"task\":\"$BADID\"" "$VAULT/crew/events/"*.jsonl && pass "an uncoverable need gets flagged" || { cat "$TMP/server.log"; fail "task.uncoverable never emitted"; }
+grep -q "\"needs\":\[\"some-bogus-capability\"\]" "$VAULT/crew/events/"*.jsonl && pass "task.uncoverable carries the needs list" || fail "task.uncoverable missing needs data"
+grep -q "\"type\":\"task.uncoverable\".*\"task\":\"$COVID\"" "$VAULT/crew/events/"*.jsonl && fail "a covered need was wrongly flagged as uncoverable" || pass "a covered need is never flagged"
+
 # Questions: an agent asks, the human answers, and only the asking agent wakes for it.
 tmp="$(mktemp)"; sed 's/subscribes: \[task.ready, job.succeeded, job.failed, job.timeout, review.rejected\]/subscribes: [task.ready, job.succeeded, job.failed, job.timeout, review.rejected, question.answered]/' "$VAULT/crew/agents/tester/agent.md" > "$tmp" && mv "$tmp" "$VAULT/crew/agents/tester/agent.md"
 "${CREW[@]}" question new >/dev/null 2>&1 && fail "question new should require topic and --text" || pass "question new without --text errors"

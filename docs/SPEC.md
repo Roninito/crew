@@ -247,6 +247,7 @@ crew appends every event to the day's log and wakes each agent that subscribes t
 | Event | Sent by | Typical listener |
 | --- | --- | --- |
 | task.created, task.ready | crew | Agents with matching `can` |
+| task.uncoverable | crew (a `task.created` whose `needs` no *enabled* agent's `can` covers) | planner |
 | task.claimed, task.released | crew | Board view |
 | task.verify | Worker agent | Verifier |
 | job.started, job.progress | Job runner, script | Live run view |
