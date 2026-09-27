@@ -1,6 +1,6 @@
 {
   "name": "wrangler",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
   "scripts": {
     "build": "bun build src/main.ts --outfile main.js --format cjs --target node --external obsidian --external electron",
