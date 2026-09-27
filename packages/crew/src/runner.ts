@@ -252,8 +252,11 @@ export function statusCmd(c: Crew, o: Out): void {
   o.say(`Needs you: ${s.review} to review, ${s.tasks.blocked ?? 0} blocked${needs ? "" : " (nothing waiting)"}`);
   o.say(`Tasks: ${Object.entries(s.tasks).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`);
   o.say(`Jobs active: ${s.jobs}. Spend today: $${s.spend.toFixed(2)}`);
-  for (const a of s.agents)
-    o.say(`  ${a.name.padEnd(14)} ${a.state.padEnd(8)} ${(a.task ?? "-").padEnd(7)} $${a.spend.toFixed(2)}  ${a.lastLog.slice(0, 70)}`);
+  const prefix = findProjectByPath(c.vault)?.id;
+  for (const a of s.agents) {
+    const name = prefix ? `${prefix}:${a.name}` : a.name;
+    o.say(`  ${name.padEnd(14 + (prefix ? prefix.length + 1 : 0))} ${a.state.padEnd(8)} ${(a.task ?? "-").padEnd(7)} $${a.spend.toFixed(2)}  ${a.lastLog.slice(0, 70)}`);
+  }
 }
 
 // ---------- kill switch ----------
