@@ -2,11 +2,11 @@
 // and shows the team as views. Every action goes through the crew HTTP API, so crew stays the single writer.
 import { type ChildProcess, spawn } from "child_process";
 import { chmodSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { randomBytes } from "node:crypto";
 import {
   type App,
+  type DataAdapter,
   FileSystemAdapter,
   ItemView,
   Modal,
@@ -19,16 +19,10 @@ import {
   setTooltip,
 } from "obsidian";
 import { type IconName, ICONS } from "./icons";
-import { VAULT_ASSETS } from "./vault-assets.generated";
 import { detectRunners, isNewerVersion, parseRunnersFromFrontmatter, platformAssetName, runCapture } from "./lib";
 
 const CREW_REPO = "roninito/crew";
 const CREW_RELEASES = `https://github.com/${CREW_REPO}/releases/latest/download`;
-const VAULT_DIRS = [
-  "agents", "tasks", "blackboard", "events", "jobs", "assets",
-  "reviews", "traces", "worktrees", "wiki", "templates/agents",
-  "templates/scripts", "skills", ".state",
-];
 
 /**
  * Obsidian (and anything it spawns, including the crew server) starts with launchd's minimal PATH,
@@ -203,47 +197,69 @@ export default class WranglerPlugin extends Plugin {
     await this.refresh();
   }
 
-  /** Creates the crew/ folder layout, templates, token and skill on first enable in a vault. Safe to re-run. */
+  /** Resolves how to invoke crew (dev override, or the managed/global binary), same choice startServer() makes. */
+  async resolveCrewCmd(): Promise<{ cmd: string; args: string[] } | null> {
+    if (this.settings.crewCliPath) return { cmd: this.settings.bunPath, args: [this.settings.crewCliPath] };
+    const bin = await this.resolveCrewBinary();
+    return bin ? { cmd: bin, args: [] } : null;
+  }
+
+  /** Runs a crew subcommand to completion and captures its output -- for `init`, not `serve` (see startServer). */
+  async runCrew(args: string[]): Promise<{ code: number; out: string }> {
+    const resolved = await this.resolveCrewCmd();
+    if (!resolved) return { code: 1, out: "crew binary isn't available yet." };
+    const loginPath = await resolveLoginPath();
+    const env = { ...process.env };
+    if (loginPath) env.PATH = loginPath;
+    return new Promise((res) => {
+      let out = "";
+      let child: ChildProcess;
+      try {
+        child = spawn(resolved.cmd, [...resolved.args, ...args], { env });
+      } catch (e) {
+        res({ code: 1, out: (e as Error).message });
+        return;
+      }
+      child.stdout?.on("data", (d) => (out += String(d)));
+      child.stderr?.on("data", (d) => (out += String(d)));
+      child.on("close", (code) => res({ code: code ?? 1, out }));
+      child.on("error", (e) => res({ code: 1, out: e.message }));
+    });
+  }
+
+  /** Recursively copies a folder through the vault adapter, skipping anything already present. */
+  async copyFolder(adapter: DataAdapter, src: string, dest: string): Promise<void> {
+    const { files, folders } = await adapter.list(src);
+    await adapter.mkdir(dest);
+    for (const f of files) {
+      const target = `${dest}/${f.slice(src.length + 1)}`;
+      if (!(await adapter.exists(target))) await adapter.write(target, await adapter.read(f));
+    }
+    for (const d of folders) await this.copyFolder(adapter, d, `${dest}/${d.slice(src.length + 1)}`);
+  }
+
+  /**
+   * Creates the crew/ folder layout, templates, token and skill on first enable in a vault, by
+   * running `crew init` -- the same scaffolding scripts/init-vault.sh and a headless setup use, so
+   * there's one source of truth instead of Wrangler carrying its own bundled copy. Safe to re-run.
+   */
   async ensureVaultSetup(): Promise<void> {
     const adapter = this.app.vault.adapter;
     if (await adapter.exists("crew/crew.md")) return;
 
     const vaultPath = this.vaultPath();
-    const vaultName = basename(vaultPath);
-    const assetsDir = join(dirname(vaultPath), `${vaultName}-assets`);
-
-    for (const d of VAULT_DIRS) await adapter.mkdir(`crew/${d}`);
-    for (const [rel, content] of Object.entries(VAULT_ASSETS)) {
-      const target = `crew/${rel}`;
-      if (await adapter.exists(target)) continue;
-      const dir = rel.includes("/") ? `crew/${rel.slice(0, rel.lastIndexOf("/"))}` : "";
-      if (dir) await adapter.mkdir(dir);
-      const filled =
-        rel === "crew.md"
-          ? content
-              .replace("{{TOKEN}}", randomBytes(16).toString("hex"))
-              .replace("{{VAULT_NAME}}", vaultName)
-              .replace("{{ASSETS}}", assetsDir)
-          : content;
-      await adapter.write(target, filled);
+    const res = await this.runCrew(["init", vaultPath]);
+    if (res.code !== 0) {
+      new Notice(`Wrangler couldn't set up crew/ in this vault: ${res.out.trim().slice(0, 300) || `exit ${res.code}`}`);
+      return;
     }
+    const assetsLine = res.out.split("\n").find((l) => l.startsWith("External assets folder:")) ?? "";
+    new Notice(`Wrangler set up crew/ in this vault. ${assetsLine}`.trim());
+
     // Also give a Copilot-style skills folder the crew-manager skill, if this vault already has one,
     // so that copilot can run the team without waiting on crew/skills/crew-manager to be pointed at.
-    if (await adapter.exists(".copilot/skills")) {
-      for (const [rel, content] of Object.entries(VAULT_ASSETS)) {
-        if (!rel.startsWith("skills/crew-manager/")) continue;
-        const target = rel.replace(/^skills\//, ".copilot/skills/");
-        if (await adapter.exists(target)) continue;
-        await adapter.mkdir(target.slice(0, target.lastIndexOf("/")));
-        await adapter.write(target, content);
-      }
-    }
-    try {
-      mkdirSync(assetsDir, { recursive: true });
-    } catch {
-      /* best effort; crew will still run without it until a job needs it */
-    }
-    new Notice(`Wrangler set up crew/ in this vault. External assets folder: ${assetsDir}`);
+    if ((await adapter.exists(".copilot/skills")) && (await adapter.exists("crew/skills/crew-manager")))
+      await this.copyFolder(adapter, "crew/skills/crew-manager", ".copilot/skills/crew-manager");
   }
 
   /** Where install-wrangler.sh (or an earlier vault's Wrangler) installs crew globally, on PATH. */
@@ -310,22 +326,14 @@ export default class WranglerPlugin extends Plugin {
   }
 
   async startServer(): Promise<void> {
-    let cmd: string;
-    let args: string[];
-    if (this.settings.crewCliPath) {
-      cmd = this.settings.bunPath;
-      args = [this.settings.crewCliPath, "serve", "--vault", this.vaultPath()];
-    } else {
-      const bin = await this.resolveCrewBinary();
-      if (!bin) return;
-      cmd = bin;
-      args = ["serve", "--vault", this.vaultPath()];
-    }
+    const resolved = await this.resolveCrewCmd();
+    if (!resolved) return;
+    const { cmd, args } = resolved;
     const loginPath = await resolveLoginPath();
     const env = { ...process.env };
     if (loginPath) env.PATH = loginPath;
     try {
-      this.child = spawn(cmd, args, {
+      this.child = spawn(cmd, [...args, "serve", "--vault", this.vaultPath()], {
         stdio: "ignore",
         env,
       });

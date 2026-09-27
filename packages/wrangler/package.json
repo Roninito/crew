@@ -3,9 +3,8 @@
   "version": "0.11.0",
   "private": true,
   "scripts": {
-    "gen-assets": "bun scripts/gen-assets.ts",
-    "build": "bun run gen-assets && bun build src/main.ts --outfile main.js --format cjs --target node --external obsidian --external electron",
-    "typecheck": "bun run gen-assets && tsc --noEmit",
+    "build": "bun build src/main.ts --outfile main.js --format cjs --target node --external obsidian --external electron",
+    "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
   "dependencies": {
