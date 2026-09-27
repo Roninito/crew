@@ -792,6 +792,18 @@ class BoardView extends CrewView {
         if (col === "claimed") await this.plugin.run(["claim", id]);
         else await this.plugin.run(["task", "update", id, "--status", col]);
       };
+      const openAccept = (t: Task) =>
+        new PromptModal(
+          this.app,
+          `Accept ${t.id}: one acceptance criterion per line`,
+          async (v) => {
+            const accepts = v.split("\n").map((l) => l.trim()).filter(Boolean);
+            const argv = ["task", "update", t.id, "--status", "ready"];
+            for (const a of accepts) argv.push("--accept", a);
+            await this.plugin.run(argv, true);
+          },
+          "Accept",
+        ).open();
       for (const t of items) {
         const card = c.createDiv({ cls: "crew-card" });
         card.draggable = true;
@@ -803,20 +815,17 @@ class BoardView extends CrewView {
         const meta = card.createDiv({ cls: "crew-muted" });
         meta.setText(`${t.claimed_by ?? t.worker ?? "unassigned"}, needs ${t.needs.join(", ") || "nothing"}`);
         if (t.status === "ready") btn(card, "Take it", () => this.plugin.run(["claim", t.id], true));
-        if (t.status === "inbox")
-          btn(card, "Accept", async () => {
-            new PromptModal(
-              this.app,
-              `Accept ${t.id}: one acceptance criterion per line`,
-              async (v) => {
-                const accepts = v.split("\n").map((l) => l.trim()).filter(Boolean);
-                const argv = ["task", "update", t.id, "--status", "ready"];
-                for (const a of accepts) argv.push("--accept", a);
-                await this.plugin.run(argv, true);
-              },
-              "Accept",
-            ).open();
-          });
+        if (t.status === "inbox") {
+          btn(card, "Accept", async () => openAccept(t), true);
+          btn(card, "Deny", async () =>
+            new PromptModal(this.app, `Deny ${t.id}: why?`, async (reason) => {
+              await this.plugin.run(["task", "update", t.id, "--status", "blocked", "--note", `denied: ${reason}`], true);
+            }).open(),
+          );
+        }
+        // A denied task can always be revived later -- same Accept flow as Inbox, since
+        // task update's --status ready transition doesn't care what the prior status was.
+        if (t.status === "blocked") btn(card, "Accept", async () => openAccept(t), true);
       }
     }
   }
