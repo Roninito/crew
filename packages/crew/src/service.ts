@@ -61,7 +61,7 @@ export async function serveMachine(): Promise<void> {
       // The dashboard shell itself carries no data -- it's static markup that then makes its own
       // authenticated fetch() calls with the token a human pastes in, same as /health, exempt from
       // the check below so a bare visit gets a page instead of a raw 401.
-      if (url.pathname === "/" && req.method === "GET") return new Response(dashboardHtml, { headers: { ...cors, "content-type": "text/html" } });
+      if (url.pathname === "/" && req.method === "GET") return new Response(dashboardHtml, { headers: { ...cors, "content-type": "text/html; charset=utf-8" } });
       const auth = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? url.searchParams.get("token");
       if (token && auth !== token) return json({ error: "unauthorized" }, 401);
 

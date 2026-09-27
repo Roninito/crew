@@ -1,8 +1,8 @@
 // A read-only, dependency-free HTML page served at "/" by both serve() and serveMachine() -- a
 // dashboard for glancing at crew from a plain browser, not just from inside Obsidian. No build
 // step: it's static markup and vanilla JS, exactly like commands.ts's HELP text is a plain
-// string. All dynamic content is set via textContent, never innerHTML, since project ids, paths
-// and agent names ultimately come from user-controlled folder/file names.
+// string. All dynamic content is set via textContent, never innerHTML, since project ids, paths,
+// agent names and event data ultimately come from user-controlled folder/file names and content.
 export const dashboardHtml = `<!doctype html>
 <html lang="en">
 <head>
@@ -26,7 +26,10 @@ export const dashboardHtml = `<!doctype html>
   #error { color:var(--bad); font-size:13px; margin-top:10px; min-height:1em; }
   .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
+  .card.clickable { cursor:pointer; }
+  .card.clickable:hover { border-color:var(--accent); }
   .card h2 { font-size:15px; font-weight:700; color:var(--fg-strong); margin-bottom:2px; }
+  .card h3 { font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--muted); margin-bottom:10px; }
   .pill { display:inline-flex; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; margin-left:6px; }
   .pill.active { background:rgba(22,163,74,.12); color:var(--ok); }
   .pill.paused { background:rgba(217,119,6,.12); color:var(--warn); }
@@ -43,6 +46,23 @@ export const dashboardHtml = `<!doctype html>
   .summary { font-size:12.5px; color:var(--muted); margin-bottom:10px; }
   #empty { color:var(--muted); text-align:center; margin-top:60px; }
   footer { color:var(--faint); font-size:12px; margin-top:28px; }
+  .back { display:inline-block; margin-bottom:14px; font-size:13px; color:var(--accent); cursor:pointer; }
+  .back:hover { text-decoration:underline; }
+  .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+  @media (max-width:760px) { .detail-grid { grid-template-columns:1fr; } }
+  .hbar-row { display:grid; grid-template-columns:90px 1fr 56px; align-items:center; gap:10px; margin-bottom:9px; font-size:12.5px; }
+  .hbar-row span:first-child { color:var(--fg); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .hbar-row span:last-child { text-align:right; color:var(--muted); font-family:var(--font-mono); }
+  .track { height:8px; border-radius:4px; background:var(--surface-2); overflow:hidden; }
+  .track i { display:block; height:100%; border-radius:4px; }
+  .terminal { background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; font-family:var(--font-mono); font-size:11.5px; line-height:1.85; max-height:340px; overflow:auto; }
+  .terminal .line { white-space:pre-wrap; word-break:break-word; margin-bottom:2px; }
+  .terminal .ts { color:var(--faint); }
+  .terminal .ty { color:var(--accent); }
+  .terminal .ty.ok { color:var(--ok); }
+  .terminal .ty.bad { color:var(--bad); }
+  .terminal .by { color:var(--muted); }
+  .terminal .empty { color:var(--faint); }
 </style>
 </head>
 <body>
@@ -58,6 +78,7 @@ export const dashboardHtml = `<!doctype html>
     <div class="sub" id="sub"></div>
     <div id="empty" style="display:none">No registered projects. Run <code>crew init</code> or <code>crew migrate &lt;path&gt;</code>.</div>
     <div class="grid" id="grid"></div>
+    <div id="detail" style="display:none"></div>
     <footer>Refreshes every 5s. Read-only -- use Wrangler in Obsidian to approve, answer, or pause.</footer>
   </div>
 <script>
@@ -65,6 +86,9 @@ export const dashboardHtml = `<!doctype html>
   var qs = new URLSearchParams(location.search);
   var token = qs.get("token") || localStorage.getItem("crewToken") || "";
   var gate = document.getElementById("gate"), app = document.getElementById("app");
+  var BAR_COLORS = ["#0ea5e9", "#d8a53f", "#a882d6", "#63b56a", "#e35b5b", "#5aa9c9"];
+
+  var mode = null, lastProjects = [], lastStatuses = {}, selected = null;
 
   function showGate(msg) {
     gate.style.display = "block"; app.style.display = "none";
@@ -85,6 +109,10 @@ export const dashboardHtml = `<!doctype html>
     });
   }
 
+  function eventsPath(id) {
+    return (mode === "machine" ? "/p/" + encodeURIComponent(id) + "/events" : "/events") + "?limit=40";
+  }
+
   function agentRow(a) {
     var row = document.createElement("div"); row.className = "row";
     var left = document.createElement("span");
@@ -99,16 +127,15 @@ export const dashboardHtml = `<!doctype html>
     return row;
   }
 
-  function card(title, path, statusPill, s) {
-    var el = document.createElement("div"); el.className = "card";
+  function overviewCard(p, s) {
+    var el = document.createElement("div"); el.className = "card clickable";
+    el.onclick = function () { selected = p.id; renderCurrent(); };
     var h = document.createElement("h2");
-    h.textContent = title;
-    if (statusPill) {
-      var pill = document.createElement("span"); pill.className = "pill " + statusPill.cls; pill.textContent = statusPill.text;
-      h.appendChild(pill);
-    }
+    h.textContent = p.id;
+    var pill = document.createElement("span"); pill.className = "pill " + (p.status === "active" ? "active" : "paused"); pill.textContent = p.status;
+    h.appendChild(pill);
     el.appendChild(h);
-    if (path) { var p = document.createElement("div"); p.className = "path"; p.textContent = path; el.appendChild(p); }
+    var path = document.createElement("div"); path.className = "path"; path.textContent = p.path + (p.missing ? "  (missing)" : ""); el.appendChild(path);
     if (s) {
       var running = s.agents.filter(function (a) { return a.state === "running"; }).length;
       var sleeping = s.agents.filter(function (a) { return a.state === "sleeping"; }).length;
@@ -121,35 +148,138 @@ export const dashboardHtml = `<!doctype html>
     return el;
   }
 
-  function render(projects, statuses, mode) {
+  function renderOverview() {
+    document.getElementById("detail").style.display = "none";
     var grid = document.getElementById("grid");
+    grid.style.display = "grid";
     grid.innerHTML = "";
-    document.getElementById("empty").style.display = projects.length ? "none" : "block";
+    document.getElementById("empty").style.display = lastProjects.length ? "none" : "block";
     document.getElementById("sub").textContent = mode === "machine"
-      ? projects.length + " registered project" + (projects.length === 1 ? "" : "s")
+      ? lastProjects.length + " registered project" + (lastProjects.length === 1 ? "" : "s")
       : "single project (v0)";
-    projects.forEach(function (p) {
-      var s = statuses[p.id];
-      var pill = { cls: p.status === "active" ? "active" : "paused", text: p.status };
-      grid.appendChild(card(p.id, p.path + (p.missing ? "  (missing)" : ""), pill, s));
+    lastProjects.forEach(function (p) { grid.appendChild(overviewCard(p, lastStatuses[p.id])); });
+  }
+
+  function hbar(label, value, max, valueText, color) {
+    var row = document.createElement("div"); row.className = "hbar-row";
+    var name = document.createElement("span"); name.textContent = label; row.appendChild(name);
+    var track = document.createElement("div"); track.className = "track";
+    var i = document.createElement("i"); i.style.width = (max > 0 ? Math.max(3, (value / max) * 100) : 0) + "%"; i.style.background = color;
+    track.appendChild(i); row.appendChild(track);
+    var val = document.createElement("span"); val.textContent = valueText; row.appendChild(val);
+    return row;
+  }
+
+  function eventLine(e) {
+    var line = document.createElement("div"); line.className = "line";
+    var bad = /fail|error|reject|blocked|anomaly|expired/.test(e.type);
+    var ok = /succeeded|approved|done|answered|resumed/.test(e.type);
+    var ts = document.createElement("span"); ts.className = "ts"; ts.textContent = (e.ts || "").slice(11, 19) + " ";
+    var ty = document.createElement("span"); ty.className = "ty " + (bad ? "bad" : ok ? "ok" : ""); ty.textContent = e.type;
+    var by = document.createElement("span"); by.className = "by"; by.textContent = "  " + e.by + (e.task ? " " + e.task : "");
+    line.appendChild(ts); line.appendChild(ty); line.appendChild(by);
+    return line;
+  }
+
+  function renderDetail() {
+    var p = lastProjects.filter(function (x) { return x.id === selected; })[0];
+    if (!p) { selected = null; return renderOverview(); }
+    var s = lastStatuses[p.id];
+    document.getElementById("grid").style.display = "none";
+    var detail = document.getElementById("detail");
+    detail.style.display = "block";
+    detail.innerHTML = "";
+
+    var back = document.createElement("div"); back.className = "back"; back.textContent = "\\u2190 All projects";
+    back.onclick = function () { selected = null; renderCurrent(); };
+    detail.appendChild(back);
+
+    var h = document.createElement("h1"); h.textContent = p.id; detail.appendChild(h);
+    var path = document.createElement("div"); path.className = "path"; path.textContent = p.path; detail.appendChild(path);
+
+    if (!s) { var none = document.createElement("p"); none.className = "sub"; none.textContent = "No status yet."; detail.appendChild(none); return; }
+
+    var grid = document.createElement("div"); grid.className = "detail-grid";
+
+    var spendCard = document.createElement("div"); spendCard.className = "card";
+    var sh = document.createElement("h3"); sh.textContent = "Spend by agent — $" + s.spend.toFixed(2); spendCard.appendChild(sh);
+    var maxSpend = Math.max.apply(null, s.agents.map(function (a) { return a.spend; }).concat([0.01]));
+    s.agents.slice().sort(function (a, b) { return b.spend - a.spend; }).forEach(function (a, i) {
+      spendCard.appendChild(hbar(a.name, a.spend, maxSpend, "$" + a.spend.toFixed(2), BAR_COLORS[i % BAR_COLORS.length]));
     });
+    grid.appendChild(spendCard);
+
+    var taskCard = document.createElement("div"); taskCard.className = "card";
+    var th = document.createElement("h3"); th.textContent = "Tasks"; taskCard.appendChild(th);
+    var order = ["inbox", "ready", "claimed", "verify", "review", "done", "blocked"];
+    var counts = order.map(function (k) { return (s.tasks && s.tasks[k]) || 0; });
+    if (!counts.some(function (c) { return c > 0; })) {
+      var noTasks = document.createElement("p"); noTasks.style.color = "var(--faint)"; noTasks.style.fontSize = "12.5px"; noTasks.textContent = "No tasks.";
+      taskCard.appendChild(noTasks);
+    } else {
+      var maxTask = Math.max.apply(null, counts.concat([1]));
+      order.forEach(function (k, i) { taskCard.appendChild(hbar(k, counts[i], maxTask, String(counts[i]), BAR_COLORS[i % BAR_COLORS.length])); });
+    }
+    grid.appendChild(taskCard);
+    detail.appendChild(grid);
+
+    var agentsCard = document.createElement("div"); agentsCard.className = "card"; agentsCard.style.marginBottom = "16px";
+    var ah = document.createElement("h3"); ah.textContent = "Agents"; agentsCard.appendChild(ah);
+    s.agents.forEach(function (a) {
+      var row = document.createElement("div"); row.className = "row";
+      var left = document.createElement("span");
+      var dot = document.createElement("span"); dot.className = "dot " + a.state; left.appendChild(dot);
+      var name = document.createElement("span"); name.className = "name"; name.textContent = a.name + "  "; left.appendChild(name);
+      var meta = document.createElement("span"); meta.style.color = "var(--faint)"; meta.textContent = a.runner + "/" + (a.model || "-");
+      left.appendChild(meta);
+      row.appendChild(left);
+      var right = document.createElement("span"); right.textContent = a.state + "  $" + a.spend.toFixed(2);
+      row.appendChild(right);
+      agentsCard.appendChild(row);
+      if (a.lastLog) {
+        var log = document.createElement("div"); log.style.fontSize = "11.5px"; log.style.color = "var(--faint)"; log.style.padding = "0 0 8px";
+        log.textContent = a.lastLog.slice(0, 100);
+        agentsCard.appendChild(log);
+      }
+    });
+    detail.appendChild(agentsCard);
+
+    var evCard = document.createElement("div"); evCard.className = "card";
+    var eh = document.createElement("h3"); eh.textContent = "Recent events"; evCard.appendChild(eh);
+    var term = document.createElement("div"); term.className = "terminal";
+    term.textContent = "loading...";
+    evCard.appendChild(term);
+    detail.appendChild(evCard);
+    api(eventsPath(p.id)).then(function (evs) {
+      term.innerHTML = "";
+      if (!evs.length) { var e = document.createElement("div"); e.className = "empty"; e.textContent = "No events yet."; term.appendChild(e); return; }
+      evs.slice().reverse().forEach(function (e) { term.appendChild(eventLine(e)); });
+    }).catch(function () {
+      term.textContent = "Couldn't load events.";
+    });
+  }
+
+  function renderCurrent() {
+    if (selected) renderDetail(); else renderOverview();
   }
 
   function tick() {
     api("/health").then(function (health) {
       if (health.projects !== undefined) {
+        mode = "machine";
         return Promise.all([api("/projects"), api("/status")]).then(function (r) {
-          render(r[0], r[1], "machine");
+          lastProjects = r[0]; lastStatuses = r[1];
         });
       }
+      mode = "v0";
       return api("/status").then(function (s) {
         var id = (health.vault || "").split("/").pop() || "project";
-        var projects = [{ id: id, path: health.vault, status: "active", missing: false }];
-        var statuses = {}; statuses[id] = s;
-        render(projects, statuses, "v0");
+        lastProjects = [{ id: id, path: health.vault, status: "active", missing: false }];
+        lastStatuses = {}; lastStatuses[id] = s;
       });
     }).then(function () {
       gate.style.display = "none"; app.style.display = "block";
+      renderCurrent();
     }).catch(function (e) {
       if (String(e.message) === "unauthorized") { localStorage.removeItem("crewToken"); showGate("Wrong token."); }
       else showGate("Couldn't reach crew: " + e.message);
