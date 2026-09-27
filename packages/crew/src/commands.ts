@@ -13,6 +13,7 @@ Usage: crew <command> [args] [--vault <path>|--project <id>] [--as <agent|human>
 
 Setup and machine service (machine-scoped, not project-scoped)
   init [path] [--id name]                  Scaffold crew/ in a folder and register it
+  migrate <path>                           Bring an existing v0 vault into the registry
   projects                                 List registered projects: status, agents, spend
   project add <path> [--id name]           Register a folder that already has crew/
   project pause|resume <id>                Stop/resume waking agents; reads still work

@@ -290,4 +290,52 @@ done
 [ "$AFTER" -gt "$BEFORE" ] && pass "restart resumes from the persisted offset -- the agent wakes for what it missed" \
   || { cat "$TMP/machine-server-2.log"; fail "no new session.started in project a after restart (before=$BEFORE after=$AFTER)"; }
 
+# --- crew migrate: bring an existing v0 vault into the registry (machine service still running) ---
+LEGACY="$TMP/LegacyVault"
+"$ROOT/scripts/init-vault.sh" "$LEGACY" >/dev/null
+LPORT=$(( 19000 + RANDOM % 1000 ))
+tmp="$(mktemp)"; sed "s/port: 7717/port: $LPORT/" "$LEGACY/crew/crew.md" > "$tmp" && mv "$tmp" "$LEGACY/crew/crew.md"
+
+# A real, currently-running v0 server for it -- this is exactly the case migrate has to take over from.
+CREW_VAULT="$LEGACY" bun "$ROOT/packages/crew/bin/crew.ts" serve >"$TMP/legacy-server.log" 2>&1 &
+LEGACY_PID=$!
+for i in $(seq 1 20); do curl -sf "http://127.0.0.1:$LPORT/health" >/dev/null && break; sleep 0.25; done
+curl -sf "http://127.0.0.1:$LPORT/health" >/dev/null && pass "legacy vault has its own v0 server running, pre-migrate"
+
+# A scripts/service.sh install for it: only the unit *file* is created (not actually loaded into
+# launchd/systemd), which is enough to prove migrate finds and removes it by the same name that
+# script uses, without registering a real background daemon on this machine.
+LNAME="crew-$(basename "$LEGACY" | tr -c 'a-zA-Z0-9\n' '-')"
+if [ "$(uname)" = "Darwin" ]; then UNIT_FILE="$HOME/Library/LaunchAgents/com.crew.$LNAME.plist"
+else UNIT_FILE="$HOME/.config/systemd/user/$LNAME.service"; fi
+mkdir -p "$(dirname "$UNIT_FILE")"
+echo placeholder > "$UNIT_FILE"
+
+bun "$ROOT/packages/crew/bin/crew.ts" migrate "$LEGACY" >"$TMP/migrate.log" 2>&1 || { cat "$TMP/migrate.log"; fail "crew migrate exited non-zero"; }
+sleep 0.3
+[ ! -f "$LEGACY/crew/.state/server.json" ] && pass "migrate stopped the legacy vault's own running server" || fail "legacy server.json still present after migrate"
+wait "$LEGACY_PID" 2>/dev/null || true
+[ ! -f "$UNIT_FILE" ] && pass "migrate removed the scripts/service.sh unit file" || fail "unit file still present after migrate"
+! grep -qE '^\s+port:' "$LEGACY/crew/crew.md" && pass "migrate drops api.port from crew.md" || fail "port: line still present after migrate"
+grep -q 'token:' "$LEGACY/crew/crew.md" && pass "migrate keeps the vault's own token" || fail "token missing after migrate"
+
+for i in $(seq 1 20); do "${CREW[@]}" projects | grep -qE '^legacyvault\s+active' && break; sleep 0.25; done
+"${CREW[@]}" projects | grep -qE '^legacyvault\s+active' && pass "migrated vault appears in the registry, active" || fail "legacyvault not registered active"
+curl -sf -H "Authorization: Bearer $MTOKEN" "http://127.0.0.1:$MPORT/projects" | grep -q '"id":"legacyvault"' \
+  && pass "the already-running machine service picked it up with no restart" || fail "machine service /projects missing legacyvault"
+
+bun "$ROOT/packages/crew/bin/crew.ts" migrate "$LEGACY" >/dev/null 2>&1 && pass "migrate is safe to re-run (no-op the second time)"
+
+bun "$ROOT/packages/crew/bin/crew.ts" serve --vault "$LEGACY" >"$TMP/guard-check.log" 2>&1 &
+GUARD_PID=$!
+sleep 1.5
+kill "$GUARD_PID" 2>/dev/null || true
+wait "$GUARD_PID" 2>/dev/null || true
+if grep -q "registered with the machine service" "$TMP/guard-check.log"; then
+  pass "serve --vault refuses a path already registered+active in the machine service"
+else
+  cat "$TMP/guard-check.log"
+  fail "serve --vault should have refused an already-registered active project"
+fi
+
 echo "All smoke tests passed."

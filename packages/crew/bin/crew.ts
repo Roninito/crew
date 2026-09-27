@@ -6,6 +6,7 @@ import { type Args, Crew, CrewError, type Out, dirname, findVault, join, parseAr
 import { initCmd } from "../src/init";
 import { jobExec } from "../src/jobs";
 import { runMachine } from "../src/machine-commands";
+import { migrateCmd } from "../src/migrate";
 import { findProjectById, findProjectByPath, listProjects } from "../src/registry";
 import { sessionRun } from "../src/runner";
 import { serveMachine } from "../src/service";
@@ -54,6 +55,11 @@ async function main(): Promise<number> {
 
   if (cmd === "init") {
     const o = await initCmd(a);
+    print(o, json);
+    return o.code;
+  }
+  if (cmd === "migrate") {
+    const o = await migrateCmd(a);
     print(o, json);
     return o.code;
   }

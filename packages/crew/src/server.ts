@@ -10,9 +10,10 @@ import { existsSync, openSync, readSync, closeSync, rmSync, statSync } from "nod
 import type { ServerWebSocket } from "bun";
 import { type Agent, listAgents } from "./agents";
 import { run } from "./commands";
-import { type Crew, type CrewEvent, emit, eventFiles, parseEvents, pidAlive, readEvents, readMd, withMutex, writeJson } from "./core";
+import { type Crew, type CrewEvent, CrewError, emit, eventFiles, parseEvents, pidAlive, readEvents, readMd, withMutex, writeJson } from "./core";
 import { cronMatches } from "./cron";
 import { listJobs, loadJob, releaseLocksFor, saveJob } from "./jobs";
+import { findProjectByPath } from "./registry";
 import { type Wake, activeSessions, isPaused, launch, statusData } from "./runner";
 import { listTasks, releaseTask } from "./tasks";
 
@@ -214,6 +215,11 @@ export function createProjectRuntime(c: Crew, opts?: ProjectRuntimeOpts): Projec
 }
 
 export async function serve(c: Crew): Promise<void> {
+  const registered = findProjectByPath(c.vault);
+  if (registered?.status === "active")
+    throw new CrewError(
+      `${c.vault} is registered with the machine service as "${registered.id}". Run the machine service instead (crew serve, no --vault), or "crew project pause ${registered.id}" first if you really want a standalone server here -- both use port 7717 by default and can't run at once.`,
+    );
   const cfg = c.config();
   const port = cfg.api?.port ?? 7717;
   const token = cfg.api?.token ?? "";

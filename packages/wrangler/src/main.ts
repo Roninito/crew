@@ -1,7 +1,7 @@
 // Wrangler: the Obsidian face of crew. It starts or attaches to `crew serve` for this vault
 // and shows the team as views. Every action goes through the crew HTTP API, so crew stays the single writer.
 import { type ChildProcess, spawn } from "child_process";
-import { chmodSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import {
@@ -90,6 +90,7 @@ const VIEW_BOARD = "crew-board";
 const VIEW_REVIEW = "crew-review";
 const VIEW_FEED = "crew-feed";
 const VIEW_JOBS = "crew-jobs";
+const VIEW_ALL_CREWS = "crew-all-crews";
 const COLUMNS = ["inbox", "ready", "claimed", "verify", "review", "done", "blocked"];
 const STATE_MARK: Record<string, string> = { running: "●", sleeping: "◐", idle: "○", blocked: "■", disabled: "–" };
 
@@ -101,6 +102,11 @@ export default class WranglerPlugin extends Plugin {
   child: ChildProcess | null = null;
   status: Status | null = null;
   online = false;
+  // "v0": this vault owns its own crew serve --vault child (today's original behavior).
+  // "machine": attached to a shared crew serve (no --vault) service instead -- see connect().
+  mode: "v0" | "machine" = "v0";
+  projectId: string | null = null;
+  paused = false;
   private ws: WebSocket | null = null;
   private statusEl: HTMLElement | null = null;
   private refreshTimer: number | null = null;
@@ -113,6 +119,7 @@ export default class WranglerPlugin extends Plugin {
     this.registerView(VIEW_REVIEW, (l) => new ReviewView(l, this));
     this.registerView(VIEW_FEED, (l) => new FeedView(l, this));
     this.registerView(VIEW_JOBS, (l) => new JobsView(l, this));
+    this.registerView(VIEW_ALL_CREWS, (l) => new AllCrewsView(l, this));
 
     this.statusEl = this.addStatusBarItem();
     this.statusEl.addClass("crew-statusbar");
@@ -124,6 +131,7 @@ export default class WranglerPlugin extends Plugin {
     this.addCommand({ id: "open-review", name: "Open review inbox", callback: () => void this.openView(VIEW_REVIEW, "tab") });
     this.addCommand({ id: "open-feed", name: "Open blackboard feed", callback: () => void this.openView(VIEW_FEED, "tab") });
     this.addCommand({ id: "open-jobs", name: "Open jobs", callback: () => void this.openView(VIEW_JOBS, "tab") });
+    this.addCommand({ id: "open-all-crews", name: "Open all crews", callback: () => void this.openView(VIEW_ALL_CREWS, "tab") });
     this.addCommand({ id: "new-task", name: "Create task", callback: () => new NewTaskModal(this.app, this).open() });
     this.addCommand({ id: "spawn-agent", name: "Spawn agent from template", callback: () => new NewAgentModal(this.app, this).open() });
     this.addCommand({ id: "broadcast", name: "Broadcast event", callback: () => new BroadcastModal(this.app, this).open() });
@@ -182,7 +190,94 @@ export default class WranglerPlugin extends Plugin {
     }
   }
 
-  async connect(): Promise<void> {
+  /** Where a running machine service leaves its state -- see packages/crew/src/machine.ts. */
+  machineHome(): string {
+    return join(homedir(), ".crew");
+  }
+
+  /** Reads the machine service's port/token from disk. Doesn't check it's actually reachable -- see pingHealth. */
+  readMachineInfo(): { port: number; token: string } | null {
+    try {
+      const pid = JSON.parse(readFileSync(join(this.machineHome(), ".state", "pid.json"), "utf8")) as { port?: number };
+      if (!pid.port) return null;
+      const cfg = readFileSync(join(this.machineHome(), "crew.md"), "utf8");
+      const token = cfg.match(/^\s*token:\s*"?([A-Za-z0-9]+)"?/m)?.[1] ?? "";
+      return { port: pid.port, token };
+    } catch {
+      return null;
+    }
+  }
+
+  async pingHealth(port: number): Promise<boolean> {
+    try {
+      const r = await requestUrl({ url: `http://127.0.0.1:${port}/health`, throw: false });
+      return r.status === 200 && !!(r.json as { ok?: boolean }).ok;
+    } catch {
+      return false;
+    }
+  }
+
+  restartRefreshLoop(): void {
+    if (this.refreshTimer) window.clearInterval(this.refreshTimer);
+    this.refreshTimer = window.setInterval(() => void this.refresh(), Math.max(2, this.settings.refreshSeconds) * 1000);
+    this.registerInterval(this.refreshTimer);
+  }
+
+  /**
+   * Attaches to the machine service whenever one is healthy, for any vault -- registering (or
+   * migrating) it first if it isn't already a known project. Returns false if attaching didn't
+   * work out for any reason, so connect() can fall back to v0.
+   */
+  async tryAttachMachine(machine: { port: number; token: string }): Promise<boolean> {
+    this.port = machine.port;
+    this.token = machine.token;
+    this.mode = "machine";
+    const vaultPath = this.vaultPath();
+    let projects: { id: string; path: string; status: string }[];
+    try {
+      projects = await this.getMachine<{ id: string; path: string; status: string }[]>("/projects");
+    } catch {
+      return false;
+    }
+    let entry = projects.find((p) => p.path === vaultPath);
+    if (!entry) {
+      // Not registered yet. An existing crew/crew.md means this is a v0 vault that's never been
+      // brought in -- crew migrate takes it over (stopping its own live server first if one is
+      // running) rather than just registering it half-set-up. A vault with no crew/ at all gets
+      // the same crew init call ensureVaultSetup() already makes.
+      const hasCrew = await this.app.vault.adapter.exists("crew/crew.md");
+      const res = await this.runCrew([hasCrew ? "migrate" : "init", vaultPath]);
+      if (res.code !== 0) {
+        new Notice(`Wrangler couldn't ${hasCrew ? "migrate" : "set up"} this vault with the machine service: ${res.out.trim().slice(0, 300) || `exit ${res.code}`}`);
+        return false;
+      }
+      if (this.child) {
+        // migrate stops a live v0 server for this path itself; don't leave a stale reference.
+        this.child.kill("SIGTERM");
+        this.child = null;
+      }
+      try {
+        projects = await this.getMachine<{ id: string; path: string; status: string }[]>("/projects");
+      } catch {
+        return false;
+      }
+      entry = projects.find((p) => p.path === vaultPath);
+      if (!entry) return false;
+    }
+    this.projectId = entry.id;
+    this.paused = entry.status === "paused";
+    this.online = !this.paused;
+    if (!this.paused) this.openStream();
+    this.restartRefreshLoop();
+    await this.refresh();
+    return true;
+  }
+
+  /** v0: this vault starts (or attaches to) its own crew serve --vault, unchanged from before attach mode existed. */
+  async connectV0(): Promise<void> {
+    this.mode = "v0";
+    this.projectId = null;
+    this.paused = false;
     await this.ensureVaultSetup();
     if (!(await this.readConfig())) {
       this.setStatusText("crew: not set up in this vault");
@@ -191,10 +286,14 @@ export default class WranglerPlugin extends Plugin {
     if (!(await this.health()) && this.settings.autoStart) await this.startServer();
     this.online = await this.health();
     this.openStream();
-    if (this.refreshTimer) window.clearInterval(this.refreshTimer);
-    this.refreshTimer = window.setInterval(() => void this.refresh(), Math.max(2, this.settings.refreshSeconds) * 1000);
-    this.registerInterval(this.refreshTimer);
+    this.restartRefreshLoop();
     await this.refresh();
+  }
+
+  async connect(): Promise<void> {
+    const machine = this.readMachineInfo();
+    if (machine && (await this.pingHealth(machine.port)) && (await this.tryAttachMachine(machine))) return;
+    await this.connectV0();
   }
 
   /** Resolves how to invoke crew (dev override, or the managed/global binary), same choice startServer() makes. */
@@ -353,7 +452,16 @@ export default class WranglerPlugin extends Plugin {
     new Notice("Wrangler: crew server didn't respond. Check the crew CLI path in settings if you're running from source.");
   }
 
+  /** In attach mode, "stop" means pause this project in the registry -- the shared service itself
+   * is never touched, since other projects may depend on it. */
   stopServer(): void {
+    if (this.mode === "machine") {
+      if (!this.projectId) return;
+      this.paused = true;
+      this.online = false;
+      void this.runCrew(["project", "pause", this.projectId]).then(() => this.refresh());
+      return;
+    }
     if (this.child) {
       this.child.kill("SIGTERM");
       this.child = null;
@@ -371,7 +479,8 @@ export default class WranglerPlugin extends Plugin {
   openStream(): void {
     this.ws?.close();
     try {
-      const ws = new WebSocket(`ws://127.0.0.1:${this.port}/stream?token=${this.token}`);
+      const qs = this.mode === "machine" ? `project=${this.projectId}&token=${this.token}` : `token=${this.token}`;
+      const ws = new WebSocket(`ws://127.0.0.1:${this.port}/stream?${qs}`);
       let pending: number | null = null;
       ws.onmessage = () => {
         if (pending) return;
@@ -392,7 +501,15 @@ export default class WranglerPlugin extends Plugin {
     }
   }
 
+  /** Project-scoped reads (tasks/agents/jobs/review/events/status) -- routed through /p/<id> once attached. */
   async get<T>(path: string): Promise<T> {
+    const url = this.mode === "machine" ? `http://127.0.0.1:${this.port}/p/${this.projectId}${path}` : `http://127.0.0.1:${this.port}${path}`;
+    const r = await requestUrl({ url, headers: { Authorization: `Bearer ${this.token}` } });
+    return r.json as T;
+  }
+
+  /** Machine-scoped reads (/projects, and later /status-aggregate) -- never project-prefixed. */
+  async getMachine<T>(path: string): Promise<T> {
     const r = await requestUrl({
       url: `http://127.0.0.1:${this.port}${path}`,
       headers: { Authorization: `Bearer ${this.token}` },
@@ -402,12 +519,14 @@ export default class WranglerPlugin extends Plugin {
 
   async run(argv: string[], notify = false): Promise<CmdResult> {
     try {
+      const body: { argv: string[]; as: string; project?: string } = { argv, as: "human" };
+      if (this.mode === "machine" && this.projectId) body.project = this.projectId;
       const r = await requestUrl({
         url: `http://127.0.0.1:${this.port}/cmd`,
         method: "POST",
         contentType: "application/json",
         headers: { Authorization: `Bearer ${this.token}` },
-        body: JSON.stringify({ argv, as: "human" }),
+        body: JSON.stringify(body),
       });
       const res = r.json as CmdResult;
       if (notify || res.code !== 0) new Notice(res.out || (res.code ? "crew command failed" : "Done"));
@@ -422,14 +541,16 @@ export default class WranglerPlugin extends Plugin {
   async refresh(): Promise<void> {
     try {
       this.status = await this.get<Status>("/status");
-      this.online = true;
-      if (!this.ws) this.openStream();
+      // A paused project's routes still answer (it's just not being dispatched), so a successful
+      // read alone can't mean "online" -- respect an explicit pause over the HTTP round-trip.
+      this.online = !this.paused;
+      if (this.online && !this.ws) this.openStream();
     } catch {
       this.online = false;
       this.status = null;
     }
     this.renderStatusBar();
-    for (const type of [VIEW_CREW, VIEW_BOARD, VIEW_REVIEW, VIEW_FEED, VIEW_JOBS])
+    for (const type of [VIEW_CREW, VIEW_BOARD, VIEW_REVIEW, VIEW_FEED, VIEW_JOBS, VIEW_ALL_CREWS])
       for (const leaf of this.app.workspace.getLeavesOfType(type)) void (leaf.view as CrewView).render();
   }
 
@@ -537,6 +658,16 @@ abstract class CrewView extends ItemView {
   offline(el: HTMLElement): boolean {
     if (this.plugin.online) return false;
     const box = el.createDiv({ cls: "crew-empty" });
+    if (this.plugin.mode === "machine" && this.plugin.paused) {
+      box.createEl("p", { text: "This project is paused in the machine service. Reads still work; nothing gets dispatched until it's resumed." });
+      const b = box.createEl("button", { text: "Resume", cls: "mod-cta" });
+      b.onclick = async () => {
+        if (this.plugin.projectId) await this.plugin.runCrew(["project", "resume", this.plugin.projectId]);
+        this.plugin.paused = false;
+        await this.plugin.connect();
+      };
+      return true;
+    }
     box.createEl("p", { text: "The crew server isn't running for this vault." });
     const b = box.createEl("button", { text: "Start crew", cls: "mod-cta" });
     b.onclick = async () => {
@@ -805,6 +936,55 @@ class JobsView extends CrewView {
       tr.createEl("td", { text: j.script.split("/").pop() ?? "" });
       const td = tr.createEl("td");
       if (["queued", "waiting", "running"].includes(j.status)) btn(td, "Kill", () => this.plugin.run(["job", "kill", j.id], true));
+    }
+  }
+}
+
+type MachineProject = { id: string; path: string; kind: string; status: string; missing: boolean };
+
+class AllCrewsView extends CrewView {
+  getViewType(): string {
+    return VIEW_ALL_CREWS;
+  }
+  getDisplayText(): string {
+    return "All crews";
+  }
+  getIcon(): string {
+    return "layout-grid";
+  }
+  async render(): Promise<void> {
+    const el = this.contentEl;
+    el.empty();
+    el.createEl("h4", { text: "All crews" });
+    if (this.plugin.mode !== "machine") {
+      el.createDiv({ cls: "crew-empty" }).createEl(
+        "p",
+        { text: "This vault is running its own standalone crew server. Every vault attaches here automatically once a shared machine service (crew serve, no --vault) is running." },
+      );
+      return;
+    }
+    let projects: MachineProject[] = [];
+    try {
+      projects = await this.plugin.getMachine<MachineProject[]>("/projects");
+    } catch {
+      el.createDiv({ cls: "crew-empty" }).createEl("p", { text: "Couldn't reach the machine service." });
+      return;
+    }
+    if (!projects.length) {
+      el.createEl("p", { cls: "crew-muted", text: "No projects registered yet." });
+      return;
+    }
+    for (const p of projects) {
+      const card = el.createDiv({ cls: "crew-agent" });
+      const top = card.createDiv({ cls: "crew-agent-top" });
+      top.createSpan({ cls: "crew-agent-name", text: p.id });
+      top.createSpan({ cls: "crew-muted", text: p.missing ? "missing" : p.status });
+      card.createDiv({ cls: "crew-muted", text: `${p.kind} · ${p.path}` });
+      if (p.missing) continue;
+      const acts = card.createDiv({ cls: "crew-actions" });
+      if (p.status === "active")
+        iconBtn(acts, "pause", "Pause this project", () => this.plugin.runCrew(["project", "pause", p.id]).then(() => this.render()));
+      else iconBtn(acts, "play", "Resume this project", () => this.plugin.runCrew(["project", "resume", p.id]).then(() => this.render()));
     }
   }
 }
