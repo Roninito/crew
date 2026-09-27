@@ -40,7 +40,8 @@ crew does all the work, so the team keeps running even when Obsidian is closed. 
 **crew interfaces**
 
 - **CLI:** `crew <command>`. Used by the human, the copilot, agents, and scripts.
-- **Local HTTP API:** localhost only, with a token stored in `crew/crew.md`. Wrangler and outside tools use it.
+- **Local HTTP API:** localhost only, with a token stored in `crew/crew.md` (v0) or `~/.crew/crew.md` (machine service). Wrangler and outside tools use it.
+- **Dashboard:** `GET /` on either server serves a small static, read-only HTML page -- no build step, dependency-free JS -- for glancing at status from a plain browser instead of only from inside Obsidian. Exempt from the token check the way `/health` is (it's just markup), but every actual data call it makes (`/status`, `/projects`) still needs the real token, pasted in once and kept in the browser's `localStorage`. Auto-detects v0 vs. machine mode from `/health`'s shape and polls every 5s. No actions -- approving, answering, and pausing stay in Wrangler.
 - **Live stream:** a WebSocket feed of events, job output and status, for Wrangler's live views.
 - **MCP endpoint:** the same commands as MCP tools, for harnesses that prefer MCP.
 

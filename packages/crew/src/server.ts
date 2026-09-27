@@ -12,6 +12,7 @@ import { type Agent, listAgents } from "./agents";
 import { run } from "./commands";
 import { type Crew, type CrewEvent, CrewError, emit, eventFiles, parseEvents, pidAlive, readEvents, readMd, withMutex, writeJson } from "./core";
 import { cronMatches } from "./cron";
+import { dashboardHtml } from "./dashboard";
 import { listJobs, loadJob, releaseLocksFor, saveJob } from "./jobs";
 import { listQuestions } from "./questions";
 import { findProjectByPath } from "./registry";
@@ -249,6 +250,7 @@ export async function serve(c: Crew): Promise<void> {
       if (req.method === "OPTIONS") return new Response(null, { headers: cors });
       const json = (v: unknown, status = 200) => Response.json(v, { status, headers: cors });
       if (url.pathname === "/health") return json({ ok: true, vault: c.vault, pid: process.pid });
+      if (url.pathname === "/" && req.method === "GET") return new Response(dashboardHtml, { headers: { ...cors, "content-type": "text/html" } });
       const auth = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? url.searchParams.get("token");
       if (token && auth !== token) return json({ error: "unauthorized" }, 401);
       if (url.pathname === "/stream") return srv.upgrade(req) ? undefined : json({ error: "upgrade failed" }, 400);

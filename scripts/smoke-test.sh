@@ -145,6 +145,8 @@ curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && pass "server health"
 curl -sf -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/status" | grep -q '"agents"' && pass "API status"
 curl -sf -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"argv":["task","new","Wake test","--needs","demo","--accept","x"],"as":"human"}' "http://127.0.0.1:$PORT/cmd" | grep -q '"code":0' && pass "API command"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/")" = "200" ] && pass "dashboard shell at / needs no token" || fail "dashboard route should be exempt from the auth check"
+curl -sf "http://127.0.0.1:$PORT/" | grep -q "<title>crew</title>" && pass "dashboard shell served" || fail "dashboard html missing"
 for i in $(seq 1 20); do grep -q '"session.ended".*"tester"' "$VAULT/crew/events/"*.jsonl && break; sleep 0.5; done
 grep -q '"session.started"' "$VAULT/crew/events/"*.jsonl && pass "task.ready woke the subscribed agent" || { cat "$TMP/server.log"; fail "no wake"; }
 
