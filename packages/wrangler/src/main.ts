@@ -974,6 +974,15 @@ class AllCrewsView extends CrewView {
       el.createEl("p", { cls: "crew-muted", text: "No projects registered yet." });
       return;
     }
+    // One call for every project's status, keyed by project id -- never merged into a flat list,
+    // so an agent name that two projects happen to share (every crew ships the same built-in
+    // names) is only ever ambiguous if *displayed* unqualified. Rendered here as <project>:<agent>.
+    let statuses: Record<string, Status> = {};
+    try {
+      statuses = await this.plugin.getMachine<Record<string, Status>>("/status");
+    } catch {
+      /* per-project agent lists just won't show; the project cards above still render */
+    }
     for (const p of projects) {
       const card = el.createDiv({ cls: "crew-agent" });
       const top = card.createDiv({ cls: "crew-agent-top" });
@@ -981,6 +990,15 @@ class AllCrewsView extends CrewView {
       top.createSpan({ cls: "crew-muted", text: p.missing ? "missing" : p.status });
       card.createDiv({ cls: "crew-muted", text: `${p.kind} · ${p.path}` });
       if (p.missing) continue;
+      const agents = statuses[p.id]?.agents ?? [];
+      if (agents.length) {
+        const list = card.createDiv({ cls: "crew-muted" });
+        for (const a of agents) {
+          const row = list.createDiv();
+          row.createSpan({ text: `${p.id}:${a.name}` });
+          row.createSpan({ cls: `crew-state is-${a.state}`, text: ` ${a.state}` });
+        }
+      }
       const acts = card.createDiv({ cls: "crew-actions" });
       if (p.status === "active")
         iconBtn(acts, "pause", "Pause this project", () => this.plugin.runCrew(["project", "pause", p.id]).then(() => this.render()));
