@@ -1,5 +1,7 @@
 # crew v1, phase 1 — crew migrate (Piped Piper, for real) + qualified IDs
 
+**Status: phase 1 complete.** Qualified IDs shipped as v0.14.0. Piped Piper was migrated for real on 2026-09-27: `crew migrate` stopped its live v0 server, registered it as `project-piped-piper`, dropped `api.port` from its `crew.md`, kept its token. A real machine service (`crew serve`, no `--vault`, backgrounded — not installed as a launchd service) has been dispatching it since, confirmed via real activity (agent sessions, blackboard posts, tasks moving through verify, a `task.blocked`→`planner.request` cycle) and confirmed visually in the Wrangler sidebar after an Obsidian reload — normal, attached, no fallback server spawned. Phase 2 (event propagation) is next, scoped per the correction below.
+
 ## Shipped so far
 
 - **Phase 1 ("one service")**: `crew init`, the project registry (`~/.crew/projects.md`), the multi-project machine service (`crew serve` with no `--vault`), `crew projects`/`project add|pause|resume|remove`, `crew service install`. Wrangler wired to call `crew init`.
