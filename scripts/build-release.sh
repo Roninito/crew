@@ -9,7 +9,7 @@ rm -rf "$DIST"
 mkdir -p "$DIST"
 
 echo "Building crew binaries..."
-(cd "$ROOT/packages/crew" && bun install --silent && bun run gen-helpers)
+(cd "$ROOT/packages/crew" && bun install --silent && bun run gen-helpers && bun run gen-vault-template)
 TARGETS="
 crew-darwin-arm64:bun-darwin-arm64
 crew-darwin-x64:bun-darwin-x64
