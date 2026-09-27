@@ -242,6 +242,19 @@ for P in proja:$PROJ_A projb:$PROJ_B; do
   "${CREW[@]}" task new "task for $ID" --needs demo --type asset --accept "ok" --check "true" --project "$ID" >/dev/null
 done
 
+# Qualified ids: a human can reference another registered project's item directly, without
+# --project -- no machine service needs to be running for this, it's pure local CLI resolution.
+"${CREW[@]}" task show proja:T-0001 2>/dev/null | grep -q "task for proja" \
+  && pass "qualified id (proja:T-0001) resolves to the right project" \
+  || fail "qualified id resolution didn't find proja's task"
+"${CREW[@]}" task show projb:T-0001 2>/dev/null | grep -q "task for projb" \
+  && pass "qualified id (projb:T-0001) resolves to a different project" \
+  || fail "qualified id resolution didn't find projb's task"
+"${CREW[@]}" task new "release: v2 notes" --needs demo --type asset --accept "ok" --check "true" --project proja >/dev/null
+"${CREW[@]}" task list --status ready --project proja | grep -q "release: v2 notes" \
+  && pass "a colon that doesn't match a registered project id is left alone, not misparsed as a qualified id" \
+  || fail "title with an unrelated colon got mangled by qualified-id parsing"
+
 tmp="$(mktemp)"; sed "s/port: 7717/port: $MPORT/" "$MHOME/crew.md" > "$tmp" && mv "$tmp" "$MHOME/crew.md"
 MTOKEN="$(sed -n 's/^  token: "\(.*\)"/\1/p' "$MHOME/crew.md")"
 

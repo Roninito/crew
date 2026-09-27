@@ -10,6 +10,7 @@ import { audit, trace, verdict } from "./verify";
 export const HELP = `crew: manager and central comms for a vault's agent team
 
 Usage: crew <command> [args] [--vault <path>|--project <id>] [--as <agent|human>] [--json]
+       A qualified id (e.g. crew claim art:T-0311) names its project too, same as --project.
 
 Setup and machine service (machine-scoped, not project-scoped)
   init [path] [--id name]                  Scaffold crew/ in a folder and register it

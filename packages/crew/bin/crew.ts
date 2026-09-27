@@ -7,7 +7,7 @@ import { initCmd } from "../src/init";
 import { jobExec } from "../src/jobs";
 import { runMachine } from "../src/machine-commands";
 import { migrateCmd } from "../src/migrate";
-import { findProjectById, findProjectByPath, listProjects } from "../src/registry";
+import { findProjectById, findProjectByPath, listProjects, splitQualified } from "../src/registry";
 import { sessionRun } from "../src/runner";
 import { serveMachine } from "../src/service";
 import { serve } from "../src/server";
@@ -17,13 +17,26 @@ function print(o: Out, json: boolean): void {
   else if (o.lines.length) console.log(o.lines.join("\n"));
 }
 
+// A qualified id in the arguments (crew claim art:T-0311) names its project just as explicitly as
+// --project does. Scans every positional arg after the command word for the first one that
+// splits into a *registered* project id -- requiring registration is what keeps this from ever
+// misfiring on an argument that merely happens to contain a colon.
+function findQualifiedProjectId(a: Args): string | null {
+  for (const arg of a._.slice(1)) {
+    const q = splitQualified(arg);
+    if (q && findProjectById(q.project)) return q.project;
+  }
+  return null;
+}
+
 // Which project a bare command means, in order: --vault/CREW_VAULT (v0, unchanged, always wins),
-// --project/CREW_PROJECT (looked up in the registry), the nearest crew/crew.md walking up from
-// cwd (a registered one resolves to that project; an unregistered one still resolves like v0
-// does today, so nothing that works now stops working), else fail listing what's registered.
-function resolveProject(vaultFlag: string | undefined, a: Args): Crew {
+// --project/CREW_PROJECT or a qualified id in the arguments (looked up in the registry), the
+// nearest crew/crew.md walking up from cwd (a registered one resolves to that project; an
+// unregistered one still resolves like v0 does today, so nothing that works now stops working),
+// else fail listing what's registered.
+function resolveProject(vaultFlag: string | undefined, a: Args, qualifiedProjectId: string | null): Crew {
   if (vaultFlag || process.env.CREW_VAULT) return findVault(vaultFlag);
-  const wantId = flag(a, "project") ?? process.env.CREW_PROJECT;
+  const wantId = flag(a, "project") ?? qualifiedProjectId ?? process.env.CREW_PROJECT;
   if (wantId) {
     const p = findProjectById(wantId);
     if (!p) throw new CrewError(`No registered project "${wantId}". Run "crew projects" to list them.`);
@@ -75,14 +88,25 @@ async function main(): Promise<number> {
     return -1; // keep running
   }
 
-  // Strip --vault from what the router sees (kept from v0; --project needs the same treatment).
+  // A qualified id only ever means something once --vault/CREW_VAULT is ruled out (that tier
+  // always wins outright, same as before qualified ids existed).
+  // --project (if given) always wins the resolution priority anyway (see resolveProject) -- also
+  // suppressing the qualified-id scan in that case means a qualified arg combined with an
+  // explicit --project for a *different* project fails loudly (no local match found) instead of
+  // the qualified prefix being silently stripped for the wrong target.
+  const qualifiedProjectId = vaultFlag || process.env.CREW_VAULT || flag(a, "project") ? null : findQualifiedProjectId(a);
+
+  // Strip --vault/--project from what the router sees (kept from v0), and strip a qualified
+  // prefix from the one arg that supplied it, so the target project only ever sees its own local
+  // id -- exactly like today, no command needs to know qualified ids exist.
   const clean: string[] = [];
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--vault" || argv[i] === "--project") i++;
-    else if (argv[i]?.startsWith("--vault=") || argv[i]?.startsWith("--project=")) continue;
-    else clean.push(argv[i]!);
+    if (argv[i] === "--vault" || argv[i] === "--project") { i++; continue; }
+    if (argv[i]?.startsWith("--vault=") || argv[i]?.startsWith("--project=")) continue;
+    const q = qualifiedProjectId ? splitQualified(argv[i] ?? "") : null;
+    clean.push(q && q.project === qualifiedProjectId ? q.local : argv[i]!);
   }
-  const c = resolveProject(vaultFlag, a);
+  const c = resolveProject(vaultFlag, a, qualifiedProjectId);
   if (cmd === "serve") {
     await serve(c);
     return -1; // keep running

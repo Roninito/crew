@@ -66,6 +66,16 @@ export function validateId(id: string): void {
     throw new CrewError(`Bad project id "${id}": must be 2-24 characters, lowercase letters, digits and dashes only.`);
 }
 
+// A qualified id ("art:T-0311") names something in another project. Task/job ids (T-0001,
+// J-0001) and agent/project ids ([a-z0-9-]+) never contain a colon, so splitting on the first
+// one is unambiguous on its own -- the caller additionally checks the project half is registered
+// before treating the split as meaningful, which rules out any remaining false positive.
+export function splitQualified(id: string): { project: string; local: string } | null {
+  const i = id.indexOf(":");
+  if (i < 1 || i === id.length - 1) return null;
+  return { project: id.slice(0, i), local: id.slice(i + 1) };
+}
+
 // Registers a project. Throws if the id is already taken by a different path (ids never change
 // once issued, so a collision needs an explicit --id, not a silent auto-suffix).
 export async function registerProject(entry: ProjectEntry, home = machineHome()): Promise<void> {
