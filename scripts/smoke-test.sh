@@ -148,6 +148,23 @@ curl -sf -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
 for i in $(seq 1 20); do grep -q '"session.ended".*"tester"' "$VAULT/crew/events/"*.jsonl && break; sleep 0.5; done
 grep -q '"session.started"' "$VAULT/crew/events/"*.jsonl && pass "task.ready woke the subscribed agent" || { cat "$TMP/server.log"; fail "no wake"; }
 
+# Questions: an agent asks, the human answers, and only the asking agent wakes for it.
+tmp="$(mktemp)"; sed 's/subscribes: \[task.ready, job.succeeded, job.failed, job.timeout, review.rejected\]/subscribes: [task.ready, job.succeeded, job.failed, job.timeout, review.rejected, question.answered]/' "$VAULT/crew/agents/tester/agent.md" > "$tmp" && mv "$tmp" "$VAULT/crew/agents/tester/agent.md"
+"${CREW[@]}" question new >/dev/null 2>&1 && fail "question new should require topic and --text" || pass "question new without --text errors"
+QID="$("${CREW[@]}" question new "Blender or Houdini" --text "1. which do you prefer\n2. why" --as tester --json | grep -o '"id": "Q-[0-9]*"' | head -1 | cut -d'"' -f4)"
+[ -n "$QID" ] && pass "question new created $QID" || fail "question new didn't return an id"
+"${CREW[@]}" question list --status open | grep -q "$QID" && pass "question shows up as open" || fail "question not listed as open"
+BEFORE_WAKES=$(grep -o '"session.started"' "$VAULT/crew/events/"*.jsonl | wc -l | tr -d ' ')
+"${CREW[@]}" question answer "$QID" "Blender, it's what the pipeline already uses" >/dev/null && pass "question answered"
+"${CREW[@]}" question list --status answered | grep -q "$QID" && pass "answered question moves out of the open list" || fail "question still shows open after answering"
+"${CREW[@]}" question answer "$QID" "a second answer" >/dev/null 2>&1 && fail "answering twice should be refused" || pass "answering an already-answered question is refused"
+for i in $(seq 1 20); do
+  AFTER_WAKES=$(grep -o '"session.started"' "$VAULT/crew/events/"*.jsonl | wc -l | tr -d ' ')
+  [ "$AFTER_WAKES" -gt "$BEFORE_WAKES" ] && break
+  sleep 0.5
+done
+[ "$AFTER_WAKES" -gt "$BEFORE_WAKES" ] && pass "answering the question woke the asking agent" || { cat "$TMP/server.log"; fail "no wake after answering"; }
+
 # Job timeout resolution: --timeout wins, then the agent's own jobs.default_timeout, then crew.md's default.
 tmp="$(mktemp)"; sed 's/default_timeout: 15m/default_timeout: 7m/' "$VAULT/crew/agents/tester/agent.md" > "$tmp" && mv "$tmp" "$VAULT/crew/agents/tester/agent.md"
 "${CREW[@]}" job run --as tester --task T-0002 --script "$VAULT/crew/templates/scripts/example-job.py" >/dev/null

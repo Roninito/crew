@@ -13,6 +13,7 @@ import { run } from "./commands";
 import { type Crew, type CrewEvent, CrewError, emit, eventFiles, parseEvents, pidAlive, readEvents, readMd, withMutex, writeJson } from "./core";
 import { cronMatches } from "./cron";
 import { listJobs, loadJob, releaseLocksFor, saveJob } from "./jobs";
+import { listQuestions } from "./questions";
 import { findProjectByPath } from "./registry";
 import { type Wake, activeSessions, isPaused, launch, statusData } from "./runner";
 import { listTasks, releaseTask } from "./tasks";
@@ -25,7 +26,10 @@ function subscribed(ag: Agent, type: string): boolean {
 
 function shouldWake(c: Crew, ag: Agent, ev: CrewEvent): boolean {
   if (!ag.def.enabled || !subscribed(ag, ev.type)) return false;
-  if (ev.type.startsWith("job.") || ev.type.startsWith("review.")) return ev.agent === ag.name;
+  // job.*/review.* and question.answered all target exactly one agent by name -- without this
+  // bypass a question's answer would wake every agent subscribed to question.answered, not just
+  // the one who asked it, the moment more than one agent in a project asks questions.
+  if (ev.type.startsWith("job.") || ev.type.startsWith("review.") || ev.type === "question.answered") return ev.agent === ag.name;
   if (ev.by === ag.name) return false;
   if (ev.type === "task.ready" || ev.type === "task.created") {
     const needs =
@@ -96,6 +100,11 @@ export function createProjectRuntime(c: Crew, opts?: ProjectRuntimeOpts): Projec
       if (n === threshold) anomaly("claims_expiring", ev, `${ev.task} claim expired ${n} times`);
     }
     if (ev.type === "budget.exceeded") anomaly("budget", ev, String(ev.data?.reason ?? ""));
+    // A session that starts and ends within one tick never shows up as "live" in between, so
+    // dispatch()'s launching-cleanup (timeout or live) would otherwise leave it stuck "launching"
+    // -- and un-wakeable -- for up to 15s even though it already finished. The event itself is the
+    // precise signal, so clear it here instead of waiting on either heuristic.
+    if (ev.type === "session.ended" && ev.agent) launching.delete(ev.agent);
     for (const ag of listAgents(c)) if (shouldWake(c, ag, ev)) enqueue(ag.name, { reason: `event ${ev.type}`, event: ev });
   };
 
@@ -181,6 +190,12 @@ export function createProjectRuntime(c: Crew, opts?: ProjectRuntimeOpts): Projec
           listTasks(c)
             .filter((t) => t.status === "review" || (t.sampled && !t.sampled_ack))
             .map((t) => ({ ...t, notes: readMd(c.p("tasks", `${t.id}.md`)).body.split("## Notes")[1]?.trim() ?? "" })),
+        );
+      case "/questions":
+        return json(
+          listQuestions(c)
+            .filter((q) => q.status === "open")
+            .map((q) => ({ ...q, body: readMd(c.p("questions", `${q.id}.md`)).body })),
         );
       case "/events": {
         const url = new URL(req.url);

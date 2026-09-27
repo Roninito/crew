@@ -56,6 +56,7 @@ type Status = {
   agents: AgentStatus[];
   tasks: Record<string, number>;
   review: number;
+  questions: number;
   jobs: number;
   spend: number;
 };
@@ -74,6 +75,7 @@ type Task = {
   notes?: string;
 };
 type Job = { id: string; agent: string; task: string | null; status: string; lock: string | null; script: string; created: string };
+type Question = { id: string; agent: string; topic: string; task: string | null; status: string; body: string };
 type CrewEvent = { ts: string; type: string; by: string; task?: string; data?: Record<string, unknown> };
 type CmdResult = { code: number; out: string; data: unknown };
 
@@ -567,7 +569,8 @@ export default class WranglerPlugin extends Plugin {
     const running = s.agents.filter((a) => a.state === "running").length;
     const sleeping = s.agents.filter((a) => a.state === "sleeping").length;
     const paused = s.paused ? "paused, " : "";
-    this.setStatusText(`crew: ${paused}${running} running, ${sleeping} sleeping, ${s.review} to review, $${s.spend.toFixed(2)} today`, running > 0);
+    const questions = s.questions ? `, ${s.questions} to answer` : "";
+    this.setStatusText(`crew: ${paused}${running} running, ${sleeping} sleeping, ${s.review} to review${questions}, $${s.spend.toFixed(2)} today`, running > 0);
   }
 
   async openView(type: string, where: "right" | "tab"): Promise<void> {
@@ -834,15 +837,38 @@ class ReviewView extends CrewView {
     el.empty();
     if (this.offline(el)) return;
     let items: Task[] = [];
+    let questions: Question[] = [];
     try {
       items = await this.plugin.get<Task[]>("/review");
+      questions = await this.plugin.get<Question[]>("/questions");
     } catch {
       return;
     }
     el.createEl("h4", { text: "Review" });
-    if (!items.length) {
-      el.createEl("p", { cls: "crew-muted", text: "Nothing needs you. Escalated work and sampled approvals show up here." });
+    if (!items.length && !questions.length) {
+      el.createEl("p", { cls: "crew-muted", text: "Nothing needs you. Escalated work, sampled approvals, and agent questions show up here." });
       return;
+    }
+    for (const q of questions) {
+      const box = el.createDiv({ cls: "crew-review" });
+      const h = box.createDiv({ cls: "crew-card-title" });
+      const link = h.createEl("a", { text: q.id });
+      link.onclick = () => this.plugin.openNote(`crew/questions/${q.id}.md`);
+      h.createSpan({ text: ` ${q.topic}` });
+      box.createDiv({ cls: "crew-muted", text: `${q.agent} is asking.` });
+      box.createEl("pre", { cls: "crew-notes", text: q.body.replace(/^\s*#.*\n+/, "").trim() });
+      const acts = box.createDiv({ cls: "crew-actions" });
+      btn(acts, "Answer", async () =>
+        new PromptModal(
+          this.app,
+          `Answer ${q.id}: ${q.topic}`,
+          async (answer) => {
+            await this.plugin.run(["question", "answer", q.id, answer], true);
+          },
+          "Answer",
+        ).open(),
+        true,
+      );
     }
     for (const t of items) {
       const box = el.createDiv({ cls: "crew-review" });

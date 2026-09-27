@@ -169,13 +169,17 @@ export function withMutex<T>(c: Crew, fn: () => T | Promise<T>): Promise<T> {
   return withFileLock(c.p(".state", ".mutex"), fn);
 }
 
-export function nextId(c: Crew, kind: "T" | "J"): string {
+export function nextId(c: Crew, kind: "T" | "J" | "Q"): string {
   const p = c.p(".state", "seq.json");
   const s = readJson<Record<string, number>>(p, {});
   let n = (s[kind] ?? 0) + 1;
   const fmt = (x: number) => `${kind}-${String(x).padStart(4, "0")}`;
   const taken = (x: number) =>
-    kind === "T" ? existsSync(c.p("tasks", `${fmt(x)}.md`)) : existsSync(c.p("jobs", fmt(x)));
+    kind === "T"
+      ? existsSync(c.p("tasks", `${fmt(x)}.md`))
+      : kind === "J"
+        ? existsSync(c.p("jobs", fmt(x)))
+        : existsSync(c.p("questions", `${fmt(x)}.md`));
   while (taken(n)) n++;
   s[kind] = n;
   writeJson(p, s);

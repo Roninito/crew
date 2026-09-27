@@ -195,6 +195,38 @@ worktree: null
 
 **Acceptance criteria are required** for a task to leave Inbox. They're what the verifier checks against.
 
+## Questions: agents ask, you answer
+
+A task is a deliverable with acceptance criteria; a question is an agent asking the human
+something open-ended -- an interview, a judgment call mid-task, anything that isn't "do this and
+I'll check it." One note per question, same shape as a task.
+
+```yaml
+---
+id: Q-0001
+agent: second-brain-interviewer
+topic: People (Tyrone + Charon)
+task: null                 # an optional related task id
+status: open                # open | answered
+answered_by: null
+answered_at: null
+created: 2026-09-27T18:56:00.000Z
+---
+
+# People (Tyrone + Charon)
+
+1. How did you and Tyrone start working together...
+```
+
+`crew question new "<topic>" --text "<question>" [--task id]` creates one, as whichever agent
+calls it (same actor inference as `task new`/`post` -- no separate `--for` flag). It emits
+`question.asked` but doesn't wake anyone; the point is to notify the human, not another agent.
+Wrangler's Review view shows every open question with an Answer box, and the status bar counts
+them alongside review/blocked. `crew question answer <id> "<answer>"` appends the answer to the
+note, marks it answered, and emits `question.answered` -- which wakes only the asking agent (same
+targeting-by-agent-field as `job.*`/`review.*` events), with the answer text in the event data so
+the agent's wake prompt carries it without needing to re-read anything.
+
 ## Blackboard and events
 
 The blackboard is for messages people and agents read. Events are signals that wake agents. Both go through crew.
@@ -221,6 +253,8 @@ crew appends every event to the day's log and wakes each agent that subscribes t
 | asset.requested | Any agent or the human | Bridge agents |
 | asset.ready, asset.imported | Worker, bridge | Next step in the chain |
 | review.approved, review.rejected | Verifier or the human | Original worker |
+| question.asked | Agent (`crew question new`) | Wrangler's Review view, the human |
+| question.answered | Human (`crew question answer`) | The asking agent |
 | agent.created, agent.disabled | crew | Blackboard, watcher |
 | lock.granted | crew | Queued job |
 | budget.exceeded | crew | The human, the agent |
@@ -314,13 +348,13 @@ The views answer three questions at a glance: what's running, what's stuck, and 
 | Crew sidebar | Right pane | Each agent: status, current task, last log line, runner and model, spend today | Run now, pause, stop, open agent.md |
 | Server panel | Right pane tab | crew server status, mode (plugin or service), uptime, connected tools | Start, stop, restart, copy API token |
 | Board | Main tab | Columns Inbox to Done, owner, claim timer, `needs` tags, verdict | Create task, drag, assign, claim as human |
-| Review inbox | Main tab | Escalated briefs and sampled auto-approvals | Approve, reject with note, add criterion |
+| Review inbox | Main tab | Escalated briefs, sampled auto-approvals, and open agent questions | Approve, reject with note, add criterion, answer a question |
 | Review canvas | Canvas file | Asset variants side by side in Approved, Revise, Rejected groups | Drag cards between groups |
 | Blackboard feed | Main tab | Posts and events on one timeline | Post, filter, jump to task or job |
 | Agent page | Rendered agent.md | Header card, tabs for Memory, Skills, Scripts, Logs | Edit directives, lint, enable |
 | Jobs view | Main tab | Queued, running and finished jobs, waiting locks, live output | Kill, rerun, open job note |
 | Trace view | Task note | Timeline from `crew trace` | Open any linked item |
-| Status bar | Bottom | "crew ● 3 running · 2 sleeping · 1 needs review · $1.40 today" | Open Review inbox |
+| Status bar | Bottom | "crew ● 3 running · 2 sleeping · 1 needs review · 1 to answer · $1.40 today" | Open Review inbox |
 
 **Spawn agent form.** Wrangler probes the host for Claude Code and opencode on PATH and offers detected ones in the Runner dropdown -- the only two runners it detects today. (Codex and Cursor were dropped after a first pass: their unattended-safe invocation flags -- the approval/sandbox bypass each needs to run without a human watching -- aren't confidently known, and a wrong guess baked into a suggested config is worse than no suggestion. `Other (type manually)` still lets a human wire up any runner crew.md itself supports.) opencode's live `opencode models` is queried for its model list; Claude Code uses a static known-alias list (sonnet/opus/haiku); the Model field falls back to free text otherwise. Detection is a convenience for the form, not a guarantee the runner works end to end: if the chosen runner has no matching entry under `runners:` in `crew/crew.md`, Wrangler creates the agent (it starts disabled either way) and shows a suggested config snippet to add, since crew.md is the human's own settings note and Wrangler doesn't write it for them.
 

@@ -3,6 +3,7 @@ import { agentEnable, agentLint, agentNew, agentRemove, agentSet, agentsCmd } fr
 import { emitCmd, eventsCmd, logCmd, logs, post, spendCmd } from "./comms";
 import { type Crew, CrewError, Out, flag, parseArgs, withMutex } from "./core";
 import { jobKill, jobRun, jobsCmd } from "./jobs";
+import { questionAnswer, questionList, questionNew, questionShow } from "./questions";
 import { resume, statusCmd, stopAll, wakeCmd } from "./runner";
 import { claim, release, renew, taskList, taskNew, taskShow, taskUpdate } from "./tasks";
 import { audit, trace, verdict } from "./verify";
@@ -39,6 +40,11 @@ Tasks
   task update <id> [--status s] [--note text] [--accept text] [--check cmd]
   claim <id> [--as human]      release <id>      renew <id>
 
+Questions
+  question new "<topic>" --text "<question>" [--task id]  An agent asks the human something
+  question list [--status open|answered]       question show <id>
+  question answer <id> "<answer>"              Answers it; wakes the asking agent
+
 Comms
   post "<message>" [--task id] [--topic name]
   emit <domain.event> [--task id] [--data '{json}']
@@ -61,13 +67,13 @@ Control
 `;
 
 // Commands that change shared state run under the cross-process mutex.
-const MUTATING = new Set(["task.new", "task.update", "claim", "release", "renew", "post", "emit", "log", "agent.new", "agent.enable", "agent.disable", "agent.set", "agent.remove", "verdict", "job.run", "spend", "resume"]);
+const MUTATING = new Set(["task.new", "task.update", "claim", "release", "renew", "post", "emit", "log", "agent.new", "agent.enable", "agent.disable", "agent.set", "agent.remove", "verdict", "job.run", "spend", "resume", "question.new", "question.answer"]);
 
 export async function run(c: Crew, argv: string[]): Promise<Out> {
   const a = parseArgs(argv);
   const o = new Out();
   const [cmd, sub] = a._;
-  const key = ["task", "agent", "job"].includes(cmd ?? "") ? `${cmd}.${sub ?? ""}` : (cmd ?? "");
+  const key = ["task", "agent", "job", "question"].includes(cmd ?? "") ? `${cmd}.${sub ?? ""}` : (cmd ?? "");
   const exec = async (): Promise<void> => {
     switch (key) {
       case "status":
@@ -102,6 +108,14 @@ export async function run(c: Crew, argv: string[]): Promise<Out> {
         return release(c, a, o);
       case "renew":
         return renew(c, a, o);
+      case "question.new":
+        return questionNew(c, a, o);
+      case "question.list":
+        return questionList(c, a, o);
+      case "question.show":
+        return questionShow(c, a._[2] ?? "", o);
+      case "question.answer":
+        return questionAnswer(c, a, o);
       case "post":
         return post(c, a, o);
       case "emit":

@@ -22,6 +22,7 @@ import {
 } from "./core";
 import { SELF_ARGS, jobKill, listJobs, readLocks } from "./jobs";
 import { machineServiceInfo } from "./machine";
+import { listQuestions } from "./questions";
 import { findProjectByPath } from "./registry";
 import { listTasks, releaseTask } from "./tasks";
 
@@ -237,6 +238,7 @@ export function statusData(c: Crew) {
     agents,
     tasks: counts,
     review: (counts.review ?? 0) + sampled,
+    questions: listQuestions(c).filter((q) => q.status === "open").length,
     jobs: jobs.filter((j) => ["queued", "waiting", "running"].includes(j.status)).length,
     locks: readLocks(c),
     spend: Object.values(spend).reduce((x, y) => x + y, 0),
@@ -248,8 +250,8 @@ export function statusCmd(c: Crew, o: Out): void {
   o.json = s;
   const via = s.server.mode === "machine" ? "machine service" : "own server";
   o.say(`crew server: ${s.server.running ? `running via ${via} on port ${s.server.port} (pid ${s.server.pid})` : "not running"}${s.paused ? ", PAUSED by kill switch (crew resume to continue)" : ""}`);
-  const needs = s.review + (s.tasks.blocked ?? 0);
-  o.say(`Needs you: ${s.review} to review, ${s.tasks.blocked ?? 0} blocked${needs ? "" : " (nothing waiting)"}`);
+  const needs = s.review + (s.tasks.blocked ?? 0) + s.questions;
+  o.say(`Needs you: ${s.review} to review, ${s.tasks.blocked ?? 0} blocked, ${s.questions} to answer${needs ? "" : " (nothing waiting)"}`);
   o.say(`Tasks: ${Object.entries(s.tasks).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`);
   o.say(`Jobs active: ${s.jobs}. Spend today: $${s.spend.toFixed(2)}`);
   const prefix = findProjectByPath(c.vault)?.id;
