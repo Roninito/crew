@@ -784,6 +784,20 @@ class BoardView extends CrewView {
         const meta = card.createDiv({ cls: "crew-muted" });
         meta.setText(`${t.claimed_by ?? t.worker ?? "unassigned"}, needs ${t.needs.join(", ") || "nothing"}`);
         if (t.status === "ready") btn(card, "Take it", () => this.plugin.run(["claim", t.id], true));
+        if (t.status === "inbox")
+          btn(card, "Accept", async () => {
+            new PromptModal(
+              this.app,
+              `Accept ${t.id}: one acceptance criterion per line`,
+              async (v) => {
+                const accepts = v.split("\n").map((l) => l.trim()).filter(Boolean);
+                const argv = ["task", "update", t.id, "--status", "ready"];
+                for (const a of accepts) argv.push("--accept", a);
+                await this.plugin.run(argv, true);
+              },
+              "Accept",
+            ).open();
+          });
       }
     }
   }
@@ -1009,14 +1023,14 @@ class AllCrewsView extends CrewView {
 
 // ---------- modals ----------
 class PromptModal extends Modal {
-  constructor(app: App, private label: string, private onSubmit: (v: string) => Promise<void>) {
+  constructor(app: App, private label: string, private onSubmit: (v: string) => Promise<void>, private submitLabel = "Send") {
     super(app);
   }
   onOpen(): void {
     this.titleEl.setText(this.label);
     const ta = this.contentEl.createEl("textarea", { cls: "crew-textarea" });
     const row = this.contentEl.createDiv({ cls: "crew-actions" });
-    btn(row, "Send", async () => {
+    btn(row, this.submitLabel, async () => {
       if (!ta.value.trim()) return;
       await this.onSubmit(ta.value.trim());
       this.close();
