@@ -631,7 +631,23 @@ export default class WranglerPlugin extends Plugin {
         if (res.status !== 200) throw new Error(`couldn't download ${f} (HTTP ${res.status})`);
         writeFileSync(join(dir, f), res.text);
       }
-      new Notice(`Wrangler updated to v${latest}. Reload Obsidian (Cmd/Ctrl+R) to finish.`);
+      // The plugin bundle (above) is only half of it -- the crew CLI/server binary this vault's
+      // bin/ points at is a separate download that this same button used to skip entirely, so it
+      // silently kept dispatching every session on old code even after "updating" Wrangler.
+      const asset = this.releaseAssetName();
+      let binUpdated = false;
+      if (asset) {
+        const res = await requestUrl({ url: `${CREW_RELEASES}/${asset}`, throw: false });
+        if (res.status === 200) {
+          const dest = this.managedCrewPath();
+          mkdirSync(dirname(dest), { recursive: true });
+          writeFileSync(dest, Buffer.from(res.arrayBuffer));
+          chmodSync(dest, 0o755);
+          binUpdated = true;
+        }
+      }
+      const restartNote = binUpdated && this.mode === "machine" ? " If a shared machine service is running, restart it too, so it dispatches from the new crew binary." : "";
+      new Notice(`Wrangler updated to v${latest}. Reload Obsidian (Cmd/Ctrl+R) to finish.${restartNote}`);
     } catch (e) {
       new Notice(`Wrangler update failed: ${(e as Error).message}`);
     }
