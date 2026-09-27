@@ -3,7 +3,7 @@
 # Usage: scripts/smoke-test.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-(cd "$ROOT/packages/crew" && bun run gen-helpers) >/dev/null
+(cd "$ROOT/packages/crew" && bun run gen-helpers && bun run gen-vault-template) >/dev/null
 TMP="$(mktemp -d)"
 VAULT="$TMP/TestVault"
 export CREW_VAULT="$VAULT"
@@ -209,5 +209,85 @@ for i in $(seq 1 40); do "$COMPILED" jobs | grep "$JID" | grep -q "succeeded\|fa
 "$COMPILED" jobs | grep "$JID" | grep -q succeeded \
   && pass "compiled binary: crew job run actually dispatches and completes" \
   || { cat "$TMP/compiled-server.log"; echo "--- $JID run.log ---"; cat "$VAULT/crew/jobs/$JID/run.log" 2>&1; fail "compiled binary: $JID didn't succeed -- the exact self-respawn regression this guards, or see run.log above"; }
+
+# --- Phase 1: the machine service (crew serve with no --vault), many projects behind one port ---
+# A separate CREW_HOME so this can never touch a real machine home, and CREW_VAULT unset so
+# --project resolution (not the leftover single-vault env var) is what actually gets exercised.
+kill "$SERVER_PID" 2>/dev/null || true
+SERVER_PID=""
+unset CREW_VAULT
+MHOME="$TMP/home"
+export CREW_HOME="$MHOME"
+PROJ_A="$TMP/ProjectA"
+PROJ_B="$TMP/ProjectB"
+MPORT=$(( 18000 + RANDOM % 1000 ))
+
+"${CREW[@]}" init "$PROJ_A" --id proja >/dev/null && pass "crew init scaffolds and registers a project"
+"${CREW[@]}" init "$PROJ_B" --id projb >/dev/null && pass "crew init scaffolds and registers a second project"
+"${CREW[@]}" projects | grep -qE '^proja\s+active' && "${CREW[@]}" projects | grep -qE '^projb\s+active' && pass "crew projects lists both" || fail "crew projects didn't list both proja and projb"
+
+mkdir -p "$TMP/PlainFolder"
+"${CREW[@]}" init "$TMP/PlainFolder" --id plainf >/dev/null
+"${CREW[@]}" projects | grep -qE '^plainf\s+active\s+folder\b' && pass "crew init detects kind \"folder\" for a plain directory" || fail "kind detection: folder"
+mkdir -p "$TMP/GitRepo" && (cd "$TMP/GitRepo" && git init -q)
+"${CREW[@]}" init "$TMP/GitRepo" --id gitrepo >/dev/null
+"${CREW[@]}" projects | grep -qE '^gitrepo\s+active\s+repo\b' && pass "crew init detects kind \"repo\" for a .git folder" || fail "kind detection: repo"
+
+# One dryrun-runnered worker per project, matching the top-level tests' own pattern.
+for P in proja:$PROJ_A projb:$PROJ_B; do
+  ID="${P%%:*}"; DIR="${P##*:}"
+  "${CREW[@]}" agent new tester --template worker --runner dryrun --model none --can demo --project "$ID" >/dev/null
+  perl -0pi -e 's/\{\{BLANK:.*?\}\}/filled/gs' "$DIR/crew/agents/tester/agent.md"
+  "${CREW[@]}" agent enable tester --project "$ID" >/dev/null
+  "${CREW[@]}" task new "task for $ID" --needs demo --type asset --accept "ok" --check "true" --project "$ID" >/dev/null
+done
+
+tmp="$(mktemp)"; sed "s/port: 7717/port: $MPORT/" "$MHOME/crew.md" > "$tmp" && mv "$tmp" "$MHOME/crew.md"
+MTOKEN="$(sed -n 's/^  token: "\(.*\)"/\1/p' "$MHOME/crew.md")"
+
+bun "$ROOT/packages/crew/bin/crew.ts" serve >"$TMP/machine-server.log" 2>&1 &
+SERVER_PID=$!
+for i in $(seq 1 20); do curl -sf "http://127.0.0.1:$MPORT/health" >/dev/null && break; sleep 0.25; done
+curl -sf "http://127.0.0.1:$MPORT/health" >/dev/null && pass "machine service: health"
+curl -sf -H "Authorization: Bearer $MTOKEN" "http://127.0.0.1:$MPORT/projects" | grep -q '"id":"proja"' \
+  && curl -sf -H "Authorization: Bearer $MTOKEN" "http://127.0.0.1:$MPORT/projects" | grep -q '"id":"projb"' \
+  && pass "machine service: /projects lists both over HTTP" || fail "/projects missing a project"
+
+for i in $(seq 1 20); do
+  grep -q '"session.started"' "$PROJ_A/crew/events/"*.jsonl 2>/dev/null && grep -q '"session.started"' "$PROJ_B/crew/events/"*.jsonl 2>/dev/null && break
+  sleep 0.25
+done
+grep -q '"session.started"' "$PROJ_A/crew/events/"*.jsonl 2>/dev/null && grep -q '"session.started"' "$PROJ_B/crew/events/"*.jsonl 2>/dev/null \
+  && pass "one service dispatches agents in two projects at once, on one port" \
+  || { cat "$TMP/machine-server.log"; fail "expected session.started in both projects' event logs"; }
+
+# Restart-resume: a job that finishes while the service is down must still wake its agent once
+# the service comes back, via the persisted offset -- not silently missed by re-seeding at EOF.
+BEFORE="$(grep -c '"session.started"' "$PROJ_A/crew/events/"*.jsonl 2>/dev/null || echo 0)"
+kill "$SERVER_PID" 2>/dev/null || true
+wait "$SERVER_PID" 2>/dev/null || true
+SERVER_PID=""
+sleep 0.3
+[ ! -f "$MHOME/.state/pid.json" ] && pass "machine service removes its pid file on shutdown" || fail "pid.json still present after shutdown"
+
+"${CREW[@]}" job run --as tester --script "$PROJ_A/crew/templates/scripts/example-job.py" --timeout 1m --project proja >/dev/null
+for i in $(seq 1 40); do
+  S="$("${CREW[@]}" jobs --project proja --json | grep -o '"status": "[a-z]*"' | head -1 | cut -d'"' -f4)"
+  [ "$S" = "succeeded" ] && break
+  sleep 0.5
+done
+[ "$S" = "succeeded" ] && pass "a job queued while the machine service is down still completes" || fail "job in project proja never succeeded (status: $S)"
+
+bun "$ROOT/packages/crew/bin/crew.ts" serve >"$TMP/machine-server-2.log" 2>&1 &
+SERVER_PID=$!
+for i in $(seq 1 20); do curl -sf "http://127.0.0.1:$MPORT/health" >/dev/null && break; sleep 0.25; done
+AFTER=0
+for i in $(seq 1 20); do
+  AFTER="$(grep -c '"session.started"' "$PROJ_A/crew/events/"*.jsonl 2>/dev/null || echo 0)"
+  [ "$AFTER" -gt "$BEFORE" ] && break
+  sleep 0.5
+done
+[ "$AFTER" -gt "$BEFORE" ] && pass "restart resumes from the persisted offset -- the agent wakes for what it missed" \
+  || { cat "$TMP/machine-server-2.log"; fail "no new session.started in project a after restart (before=$BEFORE after=$AFTER)"; }
 
 echo "All smoke tests passed."

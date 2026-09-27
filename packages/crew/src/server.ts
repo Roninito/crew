@@ -1,5 +1,11 @@
 // crew serve: wakes subscribed agents on events, runs schedules, sweeps expired claims and lost jobs,
 // flags anomalies, and exposes the HTTP API and live stream that Wrangler (and other tools) use.
+//
+// createProjectRuntime() holds all of this per project. serve(c) below is the v0 single-project
+// host (--vault mode, unchanged behavior); the multi-project machine service (service.ts) calls
+// the same factory once per registered project instead. Every function here already takes `c:
+// Crew` explicitly -- there's no module-level "current vault" -- so running several at once in
+// one process is a matter of not sharing closures, not rewriting the logic.
 import { existsSync, openSync, readSync, closeSync, rmSync, statSync } from "node:fs";
 import type { ServerWebSocket } from "bun";
 import { type Agent, listAgents } from "./agents";
@@ -30,19 +36,37 @@ function shouldWake(c: Crew, ag: Agent, ev: CrewEvent): boolean {
   return true;
 }
 
-export async function serve(c: Crew): Promise<void> {
+export type ProjectRuntime = {
+  c: Crew;
+  clients: Set<ServerWebSocket<unknown>>;
+  tick(): void;
+  sweep(): Promise<void>;
+  handleApi(pathname: string, req: Request, json: (v: unknown, status?: number) => Response): Promise<Response>;
+};
+
+export type ProjectRuntimeOpts = {
+  // Tags every streamed event with { project: id } -- unset in v0's single-project serve(),
+  // set by the machine service so a filtered /stream can tell projects' events apart.
+  id?: string;
+  // Lets a caller (the machine service) seed from a persisted position and hear about every
+  // change, so a restart resumes instead of re-seeding at EOF ("don't replay history", v0's
+  // behavior below, which is exactly right for a single long-lived --vault process but would
+  // lose events written while the *machine* service itself was down).
+  initial?: Map<string, number>;
+  onChange?: (m: Map<string, number>) => void;
+};
+
+export function createProjectRuntime(c: Crew, opts?: ProjectRuntimeOpts): ProjectRuntime {
   const cfg = c.config();
-  const port = cfg.api?.port ?? 7717;
-  const token = cfg.api?.token ?? "";
   const clients = new Set<ServerWebSocket<unknown>>();
   const queue = new Map<string, Wake[]>();
   const launching = new Map<string, number>();
-  const offsets = new Map<string, number>();
+  const offsets = opts?.initial ?? new Map<string, number>();
   const failures = new Map<string, number>();
   const expiries = new Map<string, number>();
   let lastMinute = -1;
 
-  for (const f of eventFiles(c)) offsets.set(f, statSync(f).size); // don't replay history
+  if (!opts?.initial) for (const f of eventFiles(c)) offsets.set(f, statSync(f).size); // don't replay history
 
   const enqueue = (agent: string, w: Wake) => {
     const q = queue.get(agent) ?? [];
@@ -56,7 +80,8 @@ export async function serve(c: Crew): Promise<void> {
   };
 
   const onEvent = (ev: CrewEvent) => {
-    for (const ws of clients) ws.send(JSON.stringify(ev));
+    const wire = opts?.id ? { ...ev, project: opts.id } : ev;
+    for (const ws of clients) ws.send(JSON.stringify(wire));
     const threshold = cfg.anomalies?.repeat_threshold ?? 2;
     if (ev.type === "job.failed" || ev.type === "job.timeout") {
       const k = ev.task ?? String(ev.data?.job);
@@ -74,6 +99,7 @@ export async function serve(c: Crew): Promise<void> {
   };
 
   const readNewEvents = () => {
+    let changed = false;
     for (const f of eventFiles(c)) {
       const size = statSync(f).size;
       const from = offsets.get(f) ?? 0;
@@ -86,8 +112,10 @@ export async function serve(c: Crew): Promise<void> {
       const lastNl = text.lastIndexOf("\n");
       if (lastNl < 0) continue;
       offsets.set(f, from + Buffer.byteLength(text.slice(0, lastNl + 1)));
+      changed = true;
       for (const ev of parseEvents(text.slice(0, lastNl + 1))) onEvent(ev);
     }
+    if (changed) opts?.onChange?.(offsets);
   };
 
   const dispatch = () => {
@@ -137,6 +165,60 @@ export async function serve(c: Crew): Promise<void> {
     });
   };
 
+  const handleApi = async (pathname: string, req: Request, json: (v: unknown, status?: number) => Response): Promise<Response> => {
+    switch (pathname) {
+      case "/status":
+        return json(statusData(c));
+      case "/tasks":
+        return json(listTasks(c));
+      case "/agents":
+        return json(listAgents(c).map((a) => a.def));
+      case "/jobs":
+        return json(listJobs(c));
+      case "/review":
+        return json(
+          listTasks(c)
+            .filter((t) => t.status === "review" || (t.sampled && !t.sampled_ack))
+            .map((t) => ({ ...t, notes: readMd(c.p("tasks", `${t.id}.md`)).body.split("## Notes")[1]?.trim() ?? "" })),
+        );
+      case "/events": {
+        const url = new URL(req.url);
+        const since = Number(url.searchParams.get("since") ?? Date.now() - 36e5);
+        return json(readEvents(c, since).slice(-Number(url.searchParams.get("limit") ?? 200)));
+      }
+      case "/cmd": {
+        if (req.method !== "POST") return json({ error: "POST only" }, 405);
+        const body = (await req.json()) as { argv?: string[]; as?: string };
+        const argv = body.argv ?? [];
+        if (["serve", "session"].includes(argv[0] ?? "") || (argv[0] === "job" && argv[1] === "exec"))
+          return json({ error: "not allowed over HTTP" }, 400);
+        const o = await run(c, [...argv, ...(body.as ? ["--as", body.as] : [])]);
+        return json({ code: o.code, out: o.lines.join("\n"), data: o.json ?? null });
+      }
+      default:
+        return json({ error: "not found" }, 404);
+    }
+  };
+
+  return {
+    c,
+    clients,
+    tick() {
+      readNewEvents();
+      schedule();
+      dispatch();
+    },
+    sweep,
+    handleApi,
+  };
+}
+
+export async function serve(c: Crew): Promise<void> {
+  const cfg = c.config();
+  const port = cfg.api?.port ?? 7717;
+  const token = cfg.api?.token ?? "";
+  const rt = createProjectRuntime(c);
+
   const server = Bun.serve({
     port,
     hostname: "127.0.0.1",
@@ -150,47 +232,17 @@ export async function serve(c: Crew): Promise<void> {
       if (token && auth !== token) return json({ error: "unauthorized" }, 401);
       if (url.pathname === "/stream") return srv.upgrade(req) ? undefined : json({ error: "upgrade failed" }, 400);
       try {
-        switch (url.pathname) {
-          case "/status":
-            return json(statusData(c));
-          case "/tasks":
-            return json(listTasks(c));
-          case "/agents":
-            return json(listAgents(c).map((a) => a.def));
-          case "/jobs":
-            return json(listJobs(c));
-          case "/review":
-            return json(
-              listTasks(c)
-                .filter((t) => t.status === "review" || (t.sampled && !t.sampled_ack))
-                .map((t) => ({ ...t, notes: readMd(c.p("tasks", `${t.id}.md`)).body.split("## Notes")[1]?.trim() ?? "" })),
-            );
-          case "/events": {
-            const since = Number(url.searchParams.get("since") ?? Date.now() - 36e5);
-            return json(readEvents(c, since).slice(-Number(url.searchParams.get("limit") ?? 200)));
-          }
-          case "/cmd": {
-            if (req.method !== "POST") return json({ error: "POST only" }, 405);
-            const body = (await req.json()) as { argv?: string[]; as?: string };
-            const argv = body.argv ?? [];
-            if (["serve", "session"].includes(argv[0] ?? "") || (argv[0] === "job" && argv[1] === "exec"))
-              return json({ error: "not allowed over HTTP" }, 400);
-            const o = await run(c, [...argv, ...(body.as ? ["--as", body.as] : [])]);
-            return json({ code: o.code, out: o.lines.join("\n"), data: o.json ?? null });
-          }
-          default:
-            return json({ error: "not found" }, 404);
-        }
+        return await rt.handleApi(url.pathname, req, json);
       } catch (e) {
         return json({ error: (e as Error).message }, 500);
       }
     },
     websocket: {
       open(ws) {
-        clients.add(ws);
+        rt.clients.add(ws);
       },
       close(ws) {
-        clients.delete(ws);
+        rt.clients.delete(ws);
       },
       message() {
         /* read-only stream */
@@ -214,10 +266,8 @@ export async function serve(c: Crew): Promise<void> {
   let ticks = 0;
   setInterval(() => {
     try {
-      readNewEvents();
-      schedule();
-      dispatch();
-      if (++ticks % 30 === 0) void sweep().catch((e) => console.error("sweep:", e));
+      rt.tick();
+      if (++ticks % 30 === 0) void rt.sweep().catch((e) => console.error("sweep:", e));
     } catch (e) {
       console.error("tick:", e);
     }

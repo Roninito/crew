@@ -91,7 +91,7 @@ export function findVault(explicit?: string): Crew {
   if (c) {
     const v = resolve(c);
     if (!existsSync(join(v, "crew", "crew.md")))
-      throw new CrewError(`No crew/crew.md in ${v}. Run scripts/init-vault.sh ${v} first.`);
+      throw new CrewError(`No crew/crew.md in ${v}. Run "crew init ${v}" first.`);
     return new Crew(v);
   }
   let d = process.cwd();
@@ -134,10 +134,11 @@ export function writeJson(path: string, v: unknown): void {
   writeFileSync(path, JSON.stringify(v, null, 2));
 }
 
-// Cross-process mutex around shared-state writes. Never nest.
-export async function withMutex<T>(c: Crew, fn: () => T | Promise<T>): Promise<T> {
-  const lock = c.p(".state", ".mutex");
-  mkdirSync(c.p(".state"), { recursive: true });
+// Cross-process mutex around a lock directory. mkdirSync is atomic, so this works as a lock
+// primitive with no extra dependency. Shared by withMutex (per-project) and the machine registry
+// lock (per-machine) -- same algorithm, different lock path.
+export async function withFileLock<T>(lock: string, fn: () => T | Promise<T>): Promise<T> {
+  mkdirSync(dirname(lock), { recursive: true });
   const start = Date.now();
   for (;;) {
     try {
@@ -152,7 +153,7 @@ export async function withMutex<T>(c: Crew, fn: () => T | Promise<T>): Promise<T
       } catch {
         /* lock vanished, retry */
       }
-      if (Date.now() - start > 15_000) throw new CrewError("Timed out waiting for the crew state lock.");
+      if (Date.now() - start > 15_000) throw new CrewError("Timed out waiting for the lock.");
       await Bun.sleep(25);
     }
   }
@@ -161,6 +162,11 @@ export async function withMutex<T>(c: Crew, fn: () => T | Promise<T>): Promise<T
   } finally {
     rmSync(lock, { recursive: true, force: true });
   }
+}
+
+// Cross-process mutex around shared-state writes. Never nest.
+export function withMutex<T>(c: Crew, fn: () => T | Promise<T>): Promise<T> {
+  return withFileLock(c.p(".state", ".mutex"), fn);
 }
 
 export function nextId(c: Crew, kind: "T" | "J"): string {
@@ -243,6 +249,10 @@ export function actorOf(a: Args): string {
 export const today = (): string => new Date().toISOString().slice(0, 10);
 export const hhmm = (d = new Date()): string => d.toTimeString().slice(0, 5);
 export const stamp = (d = new Date()): string => `${d.toISOString().slice(0, 10)} ${hhmm(d)}`;
+
+export function randomToken(bytes = 16): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 export function pidAlive(pid: number | undefined | null): boolean {
   if (!pid) return false;

@@ -9,7 +9,15 @@ import { audit, trace, verdict } from "./verify";
 
 export const HELP = `crew: manager and central comms for a vault's agent team
 
-Usage: crew <command> [args] [--vault <path>] [--as <agent|human>] [--json]
+Usage: crew <command> [args] [--vault <path>|--project <id>] [--as <agent|human>] [--json]
+
+Setup and machine service (machine-scoped, not project-scoped)
+  init [path] [--id name]                  Scaffold crew/ in a folder and register it
+  projects                                 List registered projects: status, agents, spend
+  project add <path> [--id name]           Register a folder that already has crew/
+  project pause|resume <id>                Stop/resume waking agents; reads still work
+  project remove <id>                      Unregister; files stay
+  service install|uninstall|status         Run the machine service under launchd/systemd
 
 Team
   status                                   What's running, what's stuck, what needs you
@@ -46,7 +54,8 @@ Verification
 
 Control
   spend [<agent> <usd>]        stop --all        resume
-  serve                        Run the crew server (dispatcher, scheduler, HTTP API)
+  serve                        Run the crew server: --vault <path> for one project (v0), no
+                                flag to run the machine service for every registered project
 `;
 
 // Commands that change shared state run under the cross-process mutex.

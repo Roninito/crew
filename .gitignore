@@ -2,6 +2,7 @@ node_modules/
 packages/wrangler/main.js
 packages/wrangler/src/vault-assets.generated.ts
 packages/crew/src/helpers-embedded.generated.ts
+packages/crew/src/vault-template-embedded.generated.ts
 dist/
 *.log
 .DS_Store
