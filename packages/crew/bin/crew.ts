@@ -96,6 +96,37 @@ async function main(): Promise<number> {
   // the qualified prefix being silently stripped for the wrong target.
   const qualifiedProjectId = vaultFlag || process.env.CREW_VAULT || flag(a, "project") ? null : findQualifiedProjectId(a);
 
+  // "crew status" with nothing to narrow it to one project (no --project, no --vault, cwd isn't
+  // inside a registered/unregistered vault) means "show me everything" -- loop every registered
+  // active project instead of erroring, since status is read-only and each project's own Crew
+  // already prefixes its agent lines with its project id.
+  if (cmd === "status" && !vaultFlag && !process.env.CREW_VAULT && !flag(a, "project") && !qualifiedProjectId) {
+    let singleProject: Crew | null = null;
+    try {
+      singleProject = resolveProject(vaultFlag, a, qualifiedProjectId);
+    } catch {
+      /* not inside one project's vault; fall through to the all-projects view below */
+    }
+    if (!singleProject) {
+      const projects = listProjects().filter((p) => p.status === "active");
+      if (!projects.length) {
+        console.log('No registered projects. Run "crew init" or "crew migrate <path>".');
+        return 0;
+      }
+      if (json) {
+        const out: Record<string, unknown> = {};
+        for (const p of projects) out[p.id] = (await run(new Crew(p.path), ["status"])).json;
+        console.log(JSON.stringify(out, null, 2));
+      } else {
+        for (const p of projects) {
+          console.log(`== ${p.id} ==`);
+          print(await run(new Crew(p.path), ["status"]), false);
+        }
+      }
+      return 0;
+    }
+  }
+
   // Strip --vault/--project from what the router sees (kept from v0), and strip a qualified
   // prefix from the one arg that supplied it, so the target project only ever sees its own local
   // id -- exactly like today, no command needs to know qualified ids exist.
