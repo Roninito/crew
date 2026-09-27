@@ -1,6 +1,6 @@
 # Crew + Wrangler — Spec
 
-Sep 25, 2026
+Sep 27, 2026
 
 ## Boundaries
 

@@ -138,6 +138,7 @@
         <nav>
           <a href="#quickstart">Quick start</a>
           <a href="#how">How it works</a>
+          <a href="#service">One service, many projects</a>
           <a href="#views">Views</a>
           <a href="https://github.com/roninito/crew">GitHub</a>
         </nav>
@@ -190,6 +191,13 @@
         <p>Everything is files in <code>crew/</code> inside the vault. crew is the only writer of shared state -- agents, Wrangler, your copilot, and other tools go through the CLI or its local HTTP API.</p>
       </section>
 
+      <section id="service">
+        <h2>One shared service, many projects</h2>
+        <p>Every vault or repo you set up is a <b>project</b>, registered by id in a machine-wide registry. One <code>crew serve</code> can dispatch every registered project at once, on one port -- a laptop with three vaults runs one background process, not three. Each project still keeps its own files, its own event log, and its own mutex; nothing crosses between projects except visibility. A qualified id names a project inline from anywhere -- <code>crew claim art:T-0311</code> -- same resolution tier as <code>--project</code>.</p>
+        <p>Enabling Wrangler in a vault handles all of this automatically: it registers a fresh vault, brings an existing one into the registry if it already has <code>crew/</code>, and attaches to a healthy shared service if one's running -- falling back to its own standalone server otherwise. A vault that only ever wants to stand alone doesn't have to think about any of this; the original single-vault mode still works exactly as before.</p>
+        <div class="tip"><p>An agent that needs an open-ended answer from you -- not a deliverable to verify -- asks with <code>crew question new</code>. It shows up in the Review view with an Answer box; answering wakes just that agent with your answer.</p></div>
+      </section>
+
       <section id="views">
         <h2>What you see</h2>
         <p>Agent and task state is always shown with a shape and a word, never color alone.</p>
@@ -207,9 +215,10 @@
           <tr><th>View</th><th>Shows</th></tr>
           <tr><td>Crew sidebar</td><td>Each agent: status, current task, last log line, runner and model, spend today</td></tr>
           <tr><td>Board</td><td>Tasks by column, Inbox through Done, with owner and claim timer</td></tr>
-          <tr><td>Review inbox</td><td>Escalated work and sampled approvals waiting on you</td></tr>
+          <tr><td>Review inbox</td><td>Escalated work, sampled approvals, and open agent questions waiting on you</td></tr>
           <tr><td>Blackboard feed</td><td>Posts and events on one timeline</td></tr>
           <tr><td>Jobs</td><td>Background jobs agents have started, running or finished</td></tr>
+          <tr><td>All crews</td><td>Every registered project on one page: each project's agents, spend, pause/resume</td></tr>
         </table>
       </section>
 
