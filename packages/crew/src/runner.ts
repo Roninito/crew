@@ -21,6 +21,8 @@ import {
   writeJson,
 } from "./core";
 import { SELF_ARGS, jobKill, listJobs, readLocks } from "./jobs";
+import { machineServiceInfo } from "./machine";
+import { findProjectByPath } from "./registry";
 import { listTasks, releaseTask } from "./tasks";
 
 export type Wake = { reason: string; event?: CrewEvent; task?: string };
@@ -187,9 +189,14 @@ export async function sessionRun(c: Crew, name: string, wakeFile: string): Promi
 }
 
 // ---------- status ----------
-export function serverInfo(c: Crew): { running: boolean; pid?: number; port?: number; started?: string } {
+export function serverInfo(c: Crew): { running: boolean; pid?: number; port?: number; started?: string; mode?: "v0" | "machine" } {
+  const registered = findProjectByPath(c.vault);
+  if (registered?.status === "active") {
+    const m = machineServiceInfo();
+    if (m) return { running: true, mode: "machine", ...m };
+  }
   const s = readJson<{ pid?: number; port?: number; started?: string }>(c.p(".state", "server.json"), {});
-  return { running: pidAlive(s.pid), ...s };
+  return { running: pidAlive(s.pid), mode: "v0", ...s };
 }
 
 function lastLogLine(c: Crew, name: string): string {
@@ -239,7 +246,8 @@ export function statusData(c: Crew) {
 export function statusCmd(c: Crew, o: Out): void {
   const s = statusData(c);
   o.json = s;
-  o.say(`crew server: ${s.server.running ? `running on port ${s.server.port} (pid ${s.server.pid})` : "not running"}${s.paused ? ", PAUSED by kill switch (crew resume to continue)" : ""}`);
+  const via = s.server.mode === "machine" ? "machine service" : "own server";
+  o.say(`crew server: ${s.server.running ? `running via ${via} on port ${s.server.port} (pid ${s.server.pid})` : "not running"}${s.paused ? ", PAUSED by kill switch (crew resume to continue)" : ""}`);
   const needs = s.review + (s.tasks.blocked ?? 0);
   o.say(`Needs you: ${s.review} to review, ${s.tasks.blocked ?? 0} blocked${needs ? "" : " (nothing waiting)"}`);
   o.say(`Tasks: ${Object.entries(s.tasks).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`);

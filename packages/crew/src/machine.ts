@@ -3,7 +3,7 @@
 // frontmatter read with the same readMd/writeMd used everywhere else, not a new mechanism.
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { type RunnerConfig, join, randomToken, readMd, resolve } from "./core";
+import { type RunnerConfig, join, pidAlive, randomToken, readJson, readMd, resolve } from "./core";
 
 export type MachineConfig = {
   api?: { port?: number; token?: string };
@@ -34,4 +34,11 @@ export function ensureMachineHome(home = machineHome()): void {
 export function machineConfig(home = machineHome()): MachineConfig {
   ensureMachineHome(home);
   return readMd(join(home, "crew.md")).data as MachineConfig;
+}
+
+// Whether *a* machine service is up right now, for any registered project's serverInfo() to check
+// against -- read from the same pid.json serveMachine() writes on start and removes on shutdown.
+export function machineServiceInfo(home = machineHome()): { pid: number; port: number; started: string } | null {
+  const s = readJson<{ pid?: number; port?: number; started?: string }>(join(home, ".state", "pid.json"), {});
+  return s.pid && s.port && s.started && pidAlive(s.pid) ? { pid: s.pid, port: s.port, started: s.started } : null;
 }
