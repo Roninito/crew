@@ -7,6 +7,7 @@ import { initCmd } from "../src/init";
 import { jobExec } from "../src/jobs";
 import { runMachine } from "../src/machine-commands";
 import { migrateCmd } from "../src/migrate";
+import { installCmd } from "../src/packs";
 import { findProjectById, findProjectByPath, listProjects, splitQualified } from "../src/registry";
 import { sessionRun } from "../src/runner";
 import { serveMachine } from "../src/service";
@@ -78,6 +79,11 @@ async function main(): Promise<number> {
   }
   if (cmd === "projects" || cmd === "project" || cmd === "service") {
     const o = await runMachine(argv);
+    print(o, json);
+    return o.code;
+  }
+  if (cmd === "install") {
+    const o = await installCmd(a);
     print(o, json);
     return o.code;
   }

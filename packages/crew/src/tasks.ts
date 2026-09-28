@@ -75,8 +75,102 @@ export function listTasks(c: Crew): Task[] {
 }
 
 export function addNote(md: Md, who: string, text: string): void {
-  if (!md.body.includes("## Notes")) md.body = `${md.body.trimEnd()}\n\n## Notes\n`;
-  md.body = `${md.body.trimEnd()}\n- ${stamp()} **${who}**: ${text}\n`;
+  const line = `- ${stamp()} **${who}**: ${text.replace(/\n/g, " ")}`;
+  const lines = md.body.split("\n");
+  const head = lines.findIndex((l) => /^##\s+Notes\s*$/.test(l));
+  // Notes go in the ## Notes section, not at the end of the body -- a ## Pipeline block
+  // (or anything else) appended after it must not swallow them into its own last field.
+  if (head < 0) {
+    md.body = `${md.body.trimEnd()}\n\n## Notes\n${line}\n`;
+    return;
+  }
+  let end = lines.length;
+  for (let i = head + 1; i < lines.length; i++)
+    if (/^##\s+\S/.test(lines[i]!)) {
+      end = i;
+      break;
+    }
+  let at = end;
+  while (at > head + 1 && lines[at - 1]!.trim() === "") at--;
+  lines.splice(at, 0, line);
+  md.body = lines.join("\n");
+  if (!md.body.endsWith("\n")) md.body += "\n";
+}
+
+// Pipeline fields: structured per-task state (target, promptEnhanced, attempts, artifacts,
+// feedback) that agents read and write without touching the fixed frontmatter in Task.
+// Stored as ### subsections under a ## Pipeline heading in the body, so values can span
+// multiple lines and saveTask's frontmatter overwrite never touches them.
+export function splitField(raw: string): { key: string; value: string } {
+  const eq = raw.indexOf("=");
+  if (eq <= 0) throw new CrewError(`Bad --field "${raw}". Use --field key=value.`);
+  const key = raw.slice(0, eq).trim();
+  if (!/^[A-Za-z0-9_.-]+$/.test(key))
+    throw new CrewError(`Bad field name "${key}". Use letters, digits, dot, dash or underscore.`);
+  return { key, value: raw.slice(eq + 1) };
+}
+
+export function setPipelineField(md: Md, key: string, value: string): void {
+  if (!/^[A-Za-z0-9_.-]+$/.test(key)) throw new CrewError(`Bad field name "${key}".`);
+  const lines = md.body.split("\n");
+  let head = lines.findIndex((l) => /^##\s+Pipeline\s*$/.test(l));
+  if (head < 0) {
+    if (lines.length && lines[lines.length - 1]!.trim() !== "") lines.push("");
+    lines.push("## Pipeline", "");
+    head = lines.length - 2;
+  }
+  let end = lines.length;
+  for (let i = head + 1; i < lines.length; i++)
+    if (/^##\s+\S/.test(lines[i]!)) {
+      end = i;
+      break;
+    }
+  const sub = `### ${key}`;
+  let s = -1;
+  for (let i = head + 1; i < end; i++)
+    if (lines[i]!.trim() === sub) {
+      s = i;
+      break;
+    }
+  let send = end;
+  if (s >= 0)
+    for (let i = s + 1; i < end; i++)
+      if (/^###\s+\S/.test(lines[i]!)) {
+        send = i;
+        break;
+      }
+  const replacement = [sub, ...value.split("\n"), ""];
+  if (s >= 0) lines.splice(s, send - s, ...replacement);
+  else lines.splice(end, 0, ...replacement);
+  md.body = lines.join("\n");
+}
+
+export function getPipelineFields(md: Md): Record<string, string> {
+  const out: Record<string, string> = {};
+  const lines = md.body.split("\n");
+  let cur: string | null = null;
+  let inPipeline = false;
+  for (const l of lines) {
+    if (/^##\s+Pipeline\s*$/.test(l)) {
+      inPipeline = true;
+      continue;
+    }
+    if (/^##\s+\S/.test(l)) {
+      inPipeline = false;
+      cur = null;
+      continue;
+    }
+    if (!inPipeline) continue;
+    const m = l.match(/^###\s+(\S+)\s*$/);
+    if (m) {
+      cur = m[1]!;
+      out[cur] = "";
+      continue;
+    }
+    if (cur !== null) out[cur] += (out[cur] ? "\n" : "") + l;
+  }
+  for (const k of Object.keys(out)) out[k] = out[k]!.replace(/\n+$/, "");
+  return out;
 }
 
 function isProtected(c: Crew, tags: string[]): boolean {
@@ -116,6 +210,10 @@ export function taskNew(c: Crew, a: Args, o: Out): void {
   };
   const desc = flag(a, "desc") ?? "";
   const md: Md = { data: {}, body: `\n# ${title}\n\n${desc}\n\n## Notes\n` };
+  for (const f of flags(a, "field")) {
+    const { key, value } = splitField(f);
+    setPipelineField(md, key, value);
+  }
   saveTask(c, t, md);
   const who = actorOf(a);
   emit(c, { type: "task.created", by: who, task: id, data: { needs: t.needs, type: t.type } });
@@ -136,7 +234,8 @@ export function taskList(c: Crew, a: Args, o: Out): void {
 export function taskShow(c: Crew, id: string, o: Out): void {
   if (!id) throw new CrewError("Usage: crew task show <id>");
   const { t, md } = loadTask(c, id);
-  o.json = { ...t, body: md.body };
+  const pipeline = getPipelineFields(md);
+  o.json = { ...t, body: md.body, pipeline };
   o.say(`${t.id}: ${t.title}`);
   o.say(`status ${t.status}, owner ${t.claimed_by ?? "-"}, type ${t.type}, needs ${t.needs.join(",") || "-"}`);
   if (t.worktree) o.say(`work tree ${t.worktree}`);
@@ -156,6 +255,8 @@ export function taskUpdate(c: Crew, a: Args, o: Out): void {
   if (flag(a, "needs")) t.needs = list(flag(a, "needs"));
   if (flag(a, "target")) t.target = flag(a, "target")!;
   if (flag(a, "type")) t.type = flag(a, "type")!;
+  const setFields = flags(a, "field").map(splitField);
+  for (const { key, value } of setFields) setPipelineField(md, key, value);
   const note = flag(a, "note");
   if (note) {
     addNote(md, who, note);
@@ -184,7 +285,7 @@ export function taskUpdate(c: Crew, a: Args, o: Out): void {
   saveTask(c, t, md);
   emit(c, { type: "task.updated", by: who, task: id, data: { status: t.status } });
   o.json = t;
-  if (!status) o.say(`${id} updated.`);
+  if (!status) o.say(`${id} updated${setFields.length ? ` (${setFields.map((f) => f.key).join(", ")} set)` : ""}.`);
 }
 
 // Isolated space for a task: a git worktree for code (when project.repo is set), else a staging folder.

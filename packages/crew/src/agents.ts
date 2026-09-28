@@ -149,7 +149,7 @@ export function agentLint(c: Crew, a: Args, o: Out): void {
   else o.say(`${name} passes lint${r.warnings.length ? " with warnings" : ""}.`);
 }
 
-function setEnabled(c: Crew, name: string, on: boolean): void {
+export function setEnabled(c: Crew, name: string, on: boolean): void {
   const f = c.p("agents", name, "agent.md");
   const raw = readFileSync(f, "utf8");
   const next = /^enabled:\s*(true|false)\s*$/m.test(raw)

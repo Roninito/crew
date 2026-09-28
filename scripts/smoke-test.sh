@@ -79,11 +79,43 @@ if "${CREW[@]}" agent remove scratch >/dev/null 2>&1; then fail "remove should r
 [ ! -d "$VAULT/crew/agents/scratch" ] && pass "removed agent's folder is gone" || fail "scratch folder still exists"
 "${CREW[@]}" agent lint scratch >/dev/null 2>&1 && fail "lint should fail for a removed agent" || pass "removed agent no longer resolves"
 
+# Agent packs: a zip installs into the project crew/ is called from, never globally.
+PACKZIP="$TMP/asset-pack.zip"
+python3 - "$ROOT/packs/asset-pipeline" "$PACKZIP" <<'EOF'
+import sys, zipfile, pathlib
+src, dst = pathlib.Path(sys.argv[1]), sys.argv[2]
+with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+    for p in sorted(src.rglob("*")):
+        rel = p.relative_to(src)
+        if p.is_file() and not any(part.startswith(".") for part in rel.parts):
+            z.write(p, rel)
+EOF
+[ -f "$PACKZIP" ] && pass "pack zip built" || fail "pack zip missing"
+(cd "$VAULT" && "${CREW[@]}" install "$PACKZIP" --force >/dev/null) && pass "crew install copies a pack into this project" || fail "crew install failed"
+for P in planner imager sheeter modeler; do
+  [ -f "$VAULT/crew/agents/$P/agent.md" ] && pass "pack agent $P installed" || fail "pack agent $P missing"
+  "${CREW[@]}" agent lint "$P" >/dev/null && pass "pack agent $P lints clean" || fail "pack agent $P fails lint"
+done
+grep -q "AssetPlanner" "$VAULT/crew/agents/planner/agent.md" && pass "pack overwrote planner with AssetPlanner" || fail "planner not overwritten"
+[ -d "$VAULT/crew/.state/pack-backups" ] && pass "overwritten planner backed up" || fail "no pack backup"
+[ -f "$VAULT/crew/wiki/conventions/pipeline.md" ] && pass "pack wiki page installed" || fail "pipeline wiki missing"
+[ -f "$VAULT/crew/agents/imager/skills/scripts/generate-image.py" ] && pass "pack adapter script installed" || fail "generate-image.py missing"
+grep -q "^enabled: true$" "$VAULT/crew/agents/imager/agent.md" && pass "pack enables its agents" || fail "imager should be enabled"
+OUT="$(cd "$VAULT" && "${CREW[@]}" install "$PACKZIP" 2>&1)"
+echo "$OUT" | grep -q "already installed" && pass "re-install without --force skips what's there" || fail "re-install skip text: $OUT"
+if (cd "$TMP" && "${CREW[@]}" install "$PACKZIP" >/dev/null 2>&1); then fail "install should fail outside a project"; else pass "install outside a project fails"; fi
+OUT="$(cd "$TMP" && "${CREW[@]}" install "$PACKZIP" 2>&1 || true)"
+echo "$OUT" | grep -q "not globally" && pass "global-install error tells the user packs are project-only" || fail "global error text: $OUT"
+
 # Task lifecycle with a Python job.
 "${CREW[@]}" task new "Inbox task" >/dev/null
 "${CREW[@]}" task list --status inbox | grep -q T-0001 && pass "task without criteria stays in inbox"
 "${CREW[@]}" task new "Demo asset" --needs demo --type asset --accept "hello.txt is produced" --check "true" >/dev/null
 "${CREW[@]}" claim T-0002 --as tester >/dev/null && pass "agent claimed task"
+# Pipeline fields: --field writes into ## Pipeline, task show returns it parsed.
+"${CREW[@]}" task update T-0002 --field target=image --field assetId=ship.test >/dev/null && pass "task update --field sets pipeline fields"
+"${CREW[@]}" task show T-0002 --json | grep -q '"target": "image"' && pass "task show exposes pipeline fields" || fail "pipeline missing from task show"
+"${CREW[@]}" task show T-0002 | grep -q "## Pipeline" && pass "pipeline block visible in task body" || fail "pipeline block missing from body"
 "${CREW[@]}" job run --as tester --task T-0002 --script "$VAULT/crew/templates/scripts/example-job.py" --timeout 1m >/dev/null
 for i in $(seq 1 40); do
   S="$("${CREW[@]}" jobs --json | grep -o '"status": "[a-z]*"' | head -1 | cut -d'"' -f4)"

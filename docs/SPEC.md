@@ -164,6 +164,23 @@ crew agent enable blender
 
 `crew agent remove <name>` deletes an agent's folder for good. It refuses while the agent is enabled -- `crew agent disable` first -- and doesn't touch tasks the agent claimed; reassign or reclaim those separately.
 
+**Agent packs.** `crew install <pack.zip> [--force]` copies a pack's agents into *this
+project's* `crew/` -- the project in the current directory. It refuses to run anywhere
+else: with no `crew/crew.md` found walking up from cwd it fails with "can only be
+installed into a project, not globally at this time" (no `--vault`/`--project`
+override; over HTTP the server's own project applies). Layout inside the zip:
+`agents/<name>/agent.md` (+ `memory.md`, `skills/`), optional `wiki/` pages, optional
+`pack.json` (`{name, version, agents: [{name, enabled}]}`). Overwrites are backed up to
+`crew/.state/pack-backups/`, skipped without `--force`; each installed agent is linted
+and only enabled when lint passes.
+
+**Pipeline fields.** `crew task new`/`crew task update` accept repeatable
+`--field key=value`, stored as `### key` subsections under a `## Pipeline` heading in
+the task body -- structured per-task state (`target`, `promptEnhanced`, `attempts`,
+`artifacts`, `feedback`) that survives `saveTask`'s frontmatter overwrite and shows up
+parsed as `pipeline` in `crew task show --json`. Agents update only their own stage's
+fields and `needs`.
+
 The crew-manager skill includes `new-agent.sh`, a wrapper the copilot calls with the same arguments.
 
 **Starter templates:** worker (does tasks from the board), bridge (connects to an outside app such as Unity or Blender), verifier, planner (breaks goals into tasks with acceptance criteria, on request), watcher (explains anomalies and budget stops, and is the first responder to a blocked task -- resolves the narrow, low-risk cases itself and escalates the rest, especially deletions and protected areas), scout (schedule-driven: surveys the project and proposes tasks -- to Inbox, without acceptance criteria, so nothing runs without a human or another agent picking it up -- and posts agent ideas to the blackboard under `agent-ideas`, never scaffolding them itself), devops (a worker scoped to the vault's own tooling and process rather than project content, that hands off to planner instead of improvising a plan for a task that needs breaking down first). Opt-in like any other template; only `verifier` is pre-enabled by default.

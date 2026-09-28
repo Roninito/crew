@@ -3,6 +3,7 @@ import { agentEnable, agentLint, agentNew, agentRemove, agentSet, agentsCmd } fr
 import { emitCmd, eventsCmd, logCmd, logs, post, spendCmd } from "./comms";
 import { type Crew, CrewError, Out, flag, parseArgs, withMutex } from "./core";
 import { jobKill, jobRun, jobsCmd } from "./jobs";
+import { installPack } from "./packs";
 import { questionAnswer, questionList, questionNew, questionShow } from "./questions";
 import { resume, statusCmd, stopAll, wakeCmd } from "./runner";
 import { claim, release, renew, taskList, taskNew, taskShow, taskUpdate } from "./tasks";
@@ -30,14 +31,15 @@ Team
   agent enable|disable <name>
   agent set <name> [--runner x] [--model x]  Change an existing agent's runner or model
   agent remove <name>                      Delete a disabled agent's folder
+  install <pack.zip> [--force]             Install an agent pack into this project's crew/
   wake <agent> [--task id] [--reason text] Start a session now
 
 Tasks
   task new "<title>" --needs a,b --accept "..." [--accept ...] [--check "cmd"] [--type asset|docs|code]
-                    [--target path] [--parent id] [--tags a,b] [--desc text] [--protected]
+                    [--target path] [--parent id] [--tags a,b] [--desc text] [--protected] [--field k=v]
   task list [--status ready,claimed]
   task show <id>
-  task update <id> [--status s] [--note text] [--accept text] [--check cmd]
+  task update <id> [--status s] [--note text] [--accept text] [--check cmd] [--field k=v]
   claim <id> [--as human]      release <id>      renew <id>
 
 Questions
@@ -67,7 +69,7 @@ Control
 `;
 
 // Commands that change shared state run under the cross-process mutex.
-const MUTATING = new Set(["task.new", "task.update", "claim", "release", "renew", "post", "emit", "log", "agent.new", "agent.enable", "agent.disable", "agent.set", "agent.remove", "verdict", "job.run", "spend", "resume", "question.new", "question.answer"]);
+const MUTATING = new Set(["task.new", "task.update", "claim", "release", "renew", "post", "emit", "log", "agent.new", "agent.enable", "agent.disable", "agent.set", "agent.remove", "install", "verdict", "job.run", "spend", "resume", "question.new", "question.answer"]);
 
 export async function run(c: Crew, argv: string[]): Promise<Out> {
   const a = parseArgs(argv);
@@ -92,6 +94,8 @@ export async function run(c: Crew, argv: string[]): Promise<Out> {
         return agentSet(c, a, o);
       case "agent.remove":
         return agentRemove(c, a, o);
+      case "install":
+        return installPack(c, a, o);
       case "wake":
         return wakeCmd(c, a, o);
       case "task.new":
