@@ -172,7 +172,8 @@ override; over HTTP the server's own project applies). Layout inside the zip:
 `agents/<name>/agent.md` (+ `memory.md`, `skills/`), optional `wiki/` pages, optional
 `pack.json` (`{name, version, agents: [{name, enabled}]}`). Overwrites are backed up to
 `crew/.state/pack-backups/`, skipped without `--force`; each installed agent is linted
-and only enabled when lint passes.
+and only enabled when lint passes. The shipped packs and the pack format are
+documented in `docs/agent-packs.md`.
 
 **Pipeline fields.** `crew task new`/`crew task update` accept repeatable
 `--field key=value`, stored as `### key` subsections under a `## Pipeline` heading in

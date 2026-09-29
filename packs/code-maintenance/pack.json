@@ -1,0 +1,1 @@
+{"agents": [{"enabled": true, "name": "fixer"}, {"enabled": true, "name": "reproducer"}, {"enabled": true, "name": "tester"}, {"enabled": true, "name": "triager"}], "name": "code-maintenance", "version": "0.1.0"}

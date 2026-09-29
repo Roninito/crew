@@ -1,0 +1,1 @@
+{"agents": [{"enabled": true, "name": "angle-finder"}, {"enabled": true, "name": "drafter"}, {"enabled": true, "name": "factchecker"}, {"enabled": true, "name": "polisher"}, {"enabled": true, "name": "researcher"}], "name": "content-pipeline", "version": "0.1.0"}

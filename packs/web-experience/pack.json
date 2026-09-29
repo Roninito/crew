@@ -1,0 +1,1 @@
+{"agents": [{"enabled": true, "name": "briefer"}, {"enabled": true, "name": "builder"}, {"enabled": true, "name": "motion"}], "name": "web-experience", "version": "0.1.0"}

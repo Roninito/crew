@@ -107,6 +107,80 @@ if (cd "$TMP" && "${CREW[@]}" install "$PACKZIP" >/dev/null 2>&1); then fail "in
 OUT="$(cd "$TMP" && "${CREW[@]}" install "$PACKZIP" 2>&1 || true)"
 echo "$OUT" | grep -q "not globally" && pass "global-install error tells the user packs are project-only" || fail "global error text: $OUT"
 
+# Content pipeline pack: all-new agents install without --force.
+CPACK="$TMP/content-pack.zip"
+python3 - "$ROOT/packs/content-pipeline" "$CPACK" <<'EOF'
+import sys, zipfile, pathlib
+src, dst = pathlib.Path(sys.argv[1]), sys.argv[2]
+with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+    for p in sorted(src.rglob("*")):
+        rel = p.relative_to(src)
+        if p.is_file() and not any(part.startswith(".") for part in rel.parts):
+            z.write(p, rel)
+EOF
+(cd "$VAULT" && "${CREW[@]}" install "$CPACK" >/dev/null) && pass "content pack installs" || fail "content pack install failed"
+for P in angle-finder researcher drafter factchecker polisher; do
+  "${CREW[@]}" agent lint "$P" >/dev/null && pass "content agent $P lints clean" || fail "content agent $P fails lint"
+done
+[ -f "$VAULT/crew/agents/researcher/skills/scripts/fetch-extract.py" ] && pass "content adapter script installed" || fail "fetch-extract.py missing"
+[ -f "$VAULT/crew/wiki/conventions/content.md" ] && pass "content wiki page installed" || fail "content wiki missing"
+
+# Web experience pack: builder/briefer/motion plus the motion skill and scripts.
+WPACK="$TMP/web-pack.zip"
+python3 - "$ROOT/packs/web-experience" "$WPACK" <<'EOF'
+import sys, zipfile, pathlib, stat
+src, dst = pathlib.Path(sys.argv[1]), sys.argv[2]
+with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+    for p in sorted(src.rglob("*")):
+        rel = p.relative_to(src)
+        if p.is_file() and not any(part.startswith(".") for part in rel.parts):
+            zi = zipfile.ZipInfo(str(rel))
+            zi.external_attr = (p.stat().st_mode & 0xFFFF) << 16
+            z.writestr(zi, p.read_bytes())
+EOF
+(cd "$VAULT" && "${CREW[@]}" install "$WPACK" >/dev/null) && pass "web pack installs" || fail "web pack install failed"
+for P in briefer builder motion; do
+  "${CREW[@]}" agent lint "$P" >/dev/null && pass "web agent $P lints clean" || fail "web agent $P fails lint"
+done
+[ -f "$VAULT/crew/agents/motion/skills/web-motion/SKILL.md" ] && pass "motion skill installed" || fail "SKILL.md missing"
+[ -x "$VAULT/crew/agents/builder/skills/scripts/scaffold-page.sh" ] && pass "scaffold script installed executable" || fail "scaffold-page.sh missing or not executable"
+[ -f "$VAULT/crew/wiki/conventions/web.md" ] && pass "web wiki page installed" || fail "web wiki missing"
+
+# Code maintenance pack: triage/reproduce/fix/test plus the verifier script.
+# Installed into a second vault: its `tester` would collide with this vault's own
+# scaffolding tester, which is exactly the skip-without---force path packs must handle.
+"$ROOT/scripts/init-vault.sh" "$TMP/MaintVault" >/dev/null
+MPACK="$TMP/maint-pack.zip"
+python3 - "$ROOT/packs/code-maintenance" "$MPACK" <<'EOF'
+import sys, zipfile, pathlib
+src, dst = pathlib.Path(sys.argv[1]), sys.argv[2]
+with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+    for p in sorted(src.rglob("*")):
+        rel = p.relative_to(src)
+        if p.is_file() and not any(part.startswith(".") for part in rel.parts):
+            z.write(p, rel)
+EOF
+(cd "$TMP/MaintVault" && "${CREW[@]}" install "$MPACK" >/dev/null) && pass "maintenance pack installs" || fail "maintenance pack install failed"
+for P in triager reproducer fixer tester; do
+  (cd "$TMP/MaintVault" && CREW_VAULT="$TMP/MaintVault" "${CREW[@]}" agent lint "$P" >/dev/null) && pass "maintenance agent $P lints clean" || fail "maintenance agent $P fails lint"
+done
+[ -f "$TMP/MaintVault/crew/agents/tester/skills/scripts/verify-fix.py" ] && pass "verifier script installed" || fail "verify-fix.py missing"
+
+# Release pack: single releaser plus the notes script.
+RPACK="$TMP/release-pack.zip"
+python3 - "$ROOT/packs/release" "$RPACK" <<'EOF'
+import sys, zipfile, pathlib
+src, dst = pathlib.Path(sys.argv[1]), sys.argv[2]
+with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+    for p in sorted(src.rglob("*")):
+        rel = p.relative_to(src)
+        if p.is_file() and not any(part.startswith(".") for part in rel.parts):
+            z.write(p, rel)
+EOF
+(cd "$VAULT" && "${CREW[@]}" install "$RPACK" >/dev/null) && pass "release pack installs" || fail "release pack install failed"
+"${CREW[@]}" agent lint releaser >/dev/null && pass "release agent releaser lints clean" || fail "releaser fails lint"
+[ -f "$VAULT/crew/agents/releaser/skills/scripts/draft-notes.py" ] && pass "notes script installed" || fail "draft-notes.py missing"
+
 # Task lifecycle with a Python job.
 "${CREW[@]}" task new "Inbox task" >/dev/null
 "${CREW[@]}" task list --status inbox | grep -q T-0001 && pass "task without criteria stays in inbox"

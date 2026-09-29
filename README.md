@@ -71,6 +71,18 @@ crew task new "Low-poly crate, 3 variants" --needs blender,mesh --type asset \
 
 With the server running, the task's `task.ready` event wakes the blender agent.
 
+## Agent packs
+
+Ready-made teams you install instead of designing agents one by one -- 3D asset
+pipeline, long-form content, web experiences, code maintenance, releases. See
+[docs/agent-packs.md](docs/agent-packs.md) for the catalog, install rules, and how to
+build your own.
+
+```bash
+cd ~/Vaults/Studio
+crew install packs/asset-pipeline.zip --force
+```
+
 ## How the pieces talk
 
 - Everything is files in `crew/` inside each project. crew is the only writer of shared state; agents, Wrangler, your copilot and other tools go through the CLI or the HTTP API.
@@ -121,6 +133,7 @@ packages/wrangler/     Obsidian plugin
 skill/crew-manager/   copilot skill
 vault-template/crew/  crew.md, agent templates, example job scripts, wiki starter
 docs/SPEC.md          the spec
+docs/agent-packs.md   installable agent teams: catalog, rules, building your own
 ```
 
 ## Development
