@@ -165,7 +165,7 @@ export const dashboardHtml = `<!doctype html>
   var STATE_PILL = { running: "ok", sleeping: "user", idle: "", blocked: "bad", disabled: "" };
   var STATUS_COLOR = { inbox: "#4b545d", ready: "#4dd2ff", claimed: "#5aa9c9", verify: "#a882d6", review: "#ffb547", done: "#7fd39b", blocked: "#ff7a7a" };
 
-  var mode = null, lastProjects = [], lastStatuses = {}, selected = null;
+  var mode = null, lastProjects = [], lastStatuses = {}, selected = null, replyOpen = false;
 
   function projPath(id, suffix) {
     return mode === "machine" ? "/p/" + encodeURIComponent(id) + suffix : suffix;
@@ -188,9 +188,13 @@ export const dashboardHtml = `<!doctype html>
   }
 
   // Reveals a textarea + submit/cancel under host; onSubmit(text) runs on submit, then
-  // renderDetail() refreshes the whole card set so the acted-on item disappears.
+  // renderDetail() refreshes the whole card set so the acted-on item disappears. replyOpen
+  // suppresses the periodic 5s refresh while this is up -- renderDetail() wipes and rebuilds the
+  // whole detail pane via innerHTML, which would otherwise blow away whatever's being typed
+  // (and the textarea's focus) on every tick.
   function withReply(host, placeholder, submitLabel, onSubmit) {
     if (host.querySelector(".reply-box")) return;
+    replyOpen = true;
     var box = document.createElement("div"); box.className = "reply-box";
     var ta = document.createElement("textarea"); ta.placeholder = placeholder;
     box.appendChild(ta);
@@ -200,13 +204,13 @@ export const dashboardHtml = `<!doctype html>
       var v = ta.value.trim();
       if (!v) return;
       submit.disabled = true; submit.textContent = "\\u2026";
-      onSubmit(v).then(function () { renderDetail(); }).catch(function (e) {
+      onSubmit(v).then(function () { replyOpen = false; renderDetail(); }).catch(function (e) {
         submit.disabled = false; submit.textContent = submitLabel;
         box.appendChild(errorLine(e.message));
       });
     };
     var cancel = document.createElement("button"); cancel.className = "btn"; cancel.textContent = "Cancel";
-    cancel.onclick = function () { box.remove(); };
+    cancel.onclick = function () { replyOpen = false; box.remove(); };
     actions.appendChild(submit); actions.appendChild(cancel);
     box.appendChild(actions);
     host.appendChild(box);
@@ -262,7 +266,7 @@ export const dashboardHtml = `<!doctype html>
 
   function overviewCard(p, s) {
     var el = document.createElement("div"); el.className = "card clickable";
-    el.onclick = function () { selected = p.id; renderCurrent(); };
+    el.onclick = function () { selected = p.id; replyOpen = false; renderCurrent(); };
     var h = document.createElement("h2");
     h.appendChild(document.createTextNode(p.id));
     h.appendChild(pill(p.status, p.status === "active" ? "ok" : "warn"));
@@ -380,7 +384,7 @@ export const dashboardHtml = `<!doctype html>
     document.getElementById("grid").style.display = "none";
 
     var back = document.createElement("div"); back.className = "back"; back.textContent = "\\u2190 All projects";
-    back.onclick = function () { selected = null; renderCurrent(); };
+    back.onclick = function () { selected = null; replyOpen = false; renderCurrent(); };
     var heroBack = document.getElementById("heroBack"); heroBack.innerHTML = ""; heroBack.appendChild(back);
     document.getElementById("heroTitle").textContent = p.id;
     document.getElementById("heroLede").textContent = p.path;
@@ -490,7 +494,7 @@ export const dashboardHtml = `<!doctype html>
       });
     }).then(function () {
       gate.style.display = "none"; app.style.display = "block";
-      renderCurrent();
+      if (!replyOpen) renderCurrent();
     }).catch(function (e) {
       if (String(e.message) === "unauthorized") { localStorage.removeItem("crewToken"); showGate("Wrong token."); }
       else showGate("Couldn't reach crew: " + e.message);
