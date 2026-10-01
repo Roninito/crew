@@ -1,5 +1,7 @@
-// A read-only, dependency-free HTML page served at "/" by both serve() and serveMachine() -- a
-// full-screen admin tool for glancing at crew from a plain browser, not just from inside Obsidian.
+// A dependency-free HTML page served at "/" by both serve() and serveMachine() -- a full-screen
+// admin tool for running crew from a plain browser, not just from inside Obsidian. Started
+// read-only; now also approves/rejects review items and answers questions via the same /cmd
+// endpoint Wrangler uses, so it's a second place actions happen, not just a viewer.
 // Styled as a ToolwrightTheme "app page" (~/Desktop/Guides/ToolwrightTheme.html's #app section,
 // backed by the reference Toolwright-index.html shell): always dark, no prefers-color-scheme
 // toggle -- unlike a doc page (read in whatever light the reader is already in), an app page is
@@ -98,6 +100,28 @@ export const dashboardHtml = `<!doctype html>
   .terminal .by { color:var(--dim); }
   .terminal .empty { color:var(--dimmer); }
 
+  .btn { padding:6px 12px; border-radius:var(--radius); border:1px solid var(--line-hot); background:var(--raise); color:var(--text); font-size:12.5px; font-family:var(--font-sans); cursor:pointer; }
+  .btn:hover { border-color:var(--user); }
+  .btn.primary { border-color:var(--user); color:var(--user); }
+  .btn.danger { border-color:#4a2020; color:var(--bad); }
+  .actions { margin-top:var(--gap-sm); display:flex; gap:6px; flex-wrap:wrap; }
+  .reply-box { margin-top:var(--gap-sm); }
+  .reply-box textarea { width:100%; min-height:60px; background:var(--void); border:1px solid var(--line); border-radius:var(--radius); color:var(--text); font-family:var(--font-sans); font-size:13px; padding:8px; resize:vertical; }
+
+  .review-item { border-bottom:1px solid var(--line); padding:var(--gap-sm) 0; }
+  .review-item:last-child { border-bottom:none; }
+  .review-item .title { font-weight:600; color:var(--text); font-size:13.5px; margin-bottom:2px; }
+  .review-item .meta { color:var(--dimmer); font-size:11.5px; margin-bottom:6px; }
+  .review-item .body { color:var(--dim); font-size:12.5px; white-space:pre-wrap; margin-bottom:6px; max-height:140px; overflow:auto; }
+
+  .task-row { display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); font-size:13px; }
+  .task-row:last-child { border-bottom:none; }
+  .task-row .bar { width:4px; height:16px; border-radius:2px; flex:0 0 auto; }
+  .task-row .tid { color:var(--dimmer); font-family:var(--font-mono); font-size:11.5px; flex:0 0 56px; }
+  .task-row .ttitle { color:var(--text); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .task-row .towner { color:var(--dim); font-size:11.5px; flex:0 0 auto; }
+  .task-summary { font-size:12.5px; color:var(--dim); margin-bottom:var(--gap-sm); }
+
   @media (max-width:640px) { :root { --gutter:16px; } }
 </style>
 </head>
@@ -130,7 +154,7 @@ export const dashboardHtml = `<!doctype html>
     </div>
   </main>
 
-  <footer>Refreshes every 5s. Read-only -- use Wrangler in Obsidian to approve, answer, or pause.</footer>
+  <footer>Refreshes every 5s. Approve, reject and answer here, or in Wrangler -- both write through the same crew.</footer>
 </div>
 <script>
 (function () {
@@ -139,8 +163,60 @@ export const dashboardHtml = `<!doctype html>
   var gate = document.getElementById("gate"), app = document.getElementById("app");
   var BAR_COLORS = ["#4dd2ff", "#ffb547", "#a882d6", "#7fd39b", "#ff7a7a", "#5aa9c9"];
   var STATE_PILL = { running: "ok", sleeping: "user", idle: "", blocked: "bad", disabled: "" };
+  var STATUS_COLOR = { inbox: "#4b545d", ready: "#4dd2ff", claimed: "#5aa9c9", verify: "#a882d6", review: "#ffb547", done: "#7fd39b", blocked: "#ff7a7a" };
 
   var mode = null, lastProjects = [], lastStatuses = {}, selected = null;
+
+  function projPath(id, suffix) {
+    return mode === "machine" ? "/p/" + encodeURIComponent(id) + suffix : suffix;
+  }
+
+  function cmd(argv) {
+    var body = { argv: argv, as: "human" };
+    if (mode === "machine" && selected) body.project = selected;
+    return fetch("/cmd", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(function (r) {
+      if (r.status === 401) throw new Error("unauthorized");
+      return r.json();
+    }).then(function (res) {
+      if (res.code !== 0) throw new Error(res.out || "command failed");
+      return res;
+    });
+  }
+
+  // Reveals a textarea + submit/cancel under host; onSubmit(text) runs on submit, then
+  // renderDetail() refreshes the whole card set so the acted-on item disappears.
+  function withReply(host, placeholder, submitLabel, onSubmit) {
+    if (host.querySelector(".reply-box")) return;
+    var box = document.createElement("div"); box.className = "reply-box";
+    var ta = document.createElement("textarea"); ta.placeholder = placeholder;
+    box.appendChild(ta);
+    var actions = document.createElement("div"); actions.className = "actions";
+    var submit = document.createElement("button"); submit.className = "btn primary"; submit.textContent = submitLabel;
+    submit.onclick = function () {
+      var v = ta.value.trim();
+      if (!v) return;
+      submit.disabled = true; submit.textContent = "\\u2026";
+      onSubmit(v).then(function () { renderDetail(); }).catch(function (e) {
+        submit.disabled = false; submit.textContent = submitLabel;
+        box.appendChild(errorLine(e.message));
+      });
+    };
+    var cancel = document.createElement("button"); cancel.className = "btn"; cancel.textContent = "Cancel";
+    cancel.onclick = function () { box.remove(); };
+    actions.appendChild(submit); actions.appendChild(cancel);
+    box.appendChild(actions);
+    host.appendChild(box);
+    ta.focus();
+  }
+
+  function errorLine(msg) {
+    var e = document.createElement("div"); e.style.color = "var(--bad)"; e.style.fontSize = "12px"; e.style.marginTop = "6px"; e.textContent = msg;
+    return e;
+  }
 
   function showGate(msg) {
     gate.style.display = "block"; app.style.display = "none";
@@ -167,10 +243,6 @@ export const dashboardHtml = `<!doctype html>
   function pill(text, cls) {
     var p = document.createElement("span"); p.className = "pill " + (cls || ""); p.textContent = text;
     return p;
-  }
-
-  function eventsPath(id) {
-    return (mode === "machine" ? "/p/" + encodeURIComponent(id) + "/events" : "/events") + "?limit=40";
   }
 
   function agentRow(a) {
@@ -235,6 +307,61 @@ export const dashboardHtml = `<!doctype html>
     return row;
   }
 
+  function taskRow(t) {
+    var row = document.createElement("div"); row.className = "task-row";
+    var bar = document.createElement("span"); bar.className = "bar"; bar.style.background = STATUS_COLOR[t.status] || "var(--line-hot)";
+    row.appendChild(bar);
+    var tid = document.createElement("span"); tid.className = "tid"; tid.textContent = t.id;
+    row.appendChild(tid);
+    var title = document.createElement("span"); title.className = "ttitle"; title.textContent = t.title;
+    row.appendChild(title);
+    var owner = document.createElement("span"); owner.className = "towner"; owner.textContent = t.claimed_by || t.worker || t.status;
+    row.appendChild(owner);
+    return row;
+  }
+
+  function reviewTaskItem(t) {
+    var el = document.createElement("div"); el.className = "review-item";
+    var title = document.createElement("div"); title.className = "title"; title.textContent = t.id + "  " + t.title;
+    el.appendChild(title);
+    var kind = t.status === "review" ? "Escalated" + (t.recommendation ? ", verifier recommends " + t.recommendation : "") : "Sampled auto-approval: do you agree?";
+    var meta = document.createElement("div"); meta.className = "meta"; meta.textContent = kind + ". Worker: " + (t.worker || "unknown") + ".";
+    el.appendChild(meta);
+    var last = (t.notes || "").split("\\n").filter(Boolean).slice(-3).join("\\n");
+    if (last) { var body = document.createElement("div"); body.className = "body"; body.textContent = last; el.appendChild(body); }
+    var actions = document.createElement("div"); actions.className = "actions";
+    var approveLabel = t.status === "review" ? "Approve" : "Agree";
+    var rejectLabel = t.status === "review" ? "Reject" : "Disagree";
+    var approveVerb = t.status === "review" ? "approve" : "agree";
+    var rejectVerb = t.status === "review" ? "reject" : "disagree";
+    var approve = document.createElement("button"); approve.className = "btn primary"; approve.textContent = approveLabel;
+    approve.onclick = function () {
+      approve.disabled = true;
+      cmd(["verdict", t.id, approveVerb]).then(function () { renderDetail(); }).catch(function (e) { approve.disabled = false; el.appendChild(errorLine(e.message)); });
+    };
+    var reject = document.createElement("button"); reject.className = "btn danger"; reject.textContent = rejectLabel;
+    reject.onclick = function () { withReply(el, "What needs fixing?", rejectLabel, function (reason) { return cmd(["verdict", t.id, rejectVerb, "--reason", reason]); }); };
+    actions.appendChild(approve); actions.appendChild(reject);
+    el.appendChild(actions);
+    return el;
+  }
+
+  function reviewQuestionItem(q) {
+    var el = document.createElement("div"); el.className = "review-item";
+    var title = document.createElement("div"); title.className = "title"; title.textContent = q.id + "  " + q.topic;
+    el.appendChild(title);
+    var meta = document.createElement("div"); meta.className = "meta"; meta.textContent = q.agent + " is asking.";
+    el.appendChild(meta);
+    var body = document.createElement("div"); body.className = "body"; body.textContent = (q.body || "").replace(/^\\s*#.*\\n+/, "").trim();
+    el.appendChild(body);
+    var actions = document.createElement("div"); actions.className = "actions";
+    var reply = document.createElement("button"); reply.className = "btn primary"; reply.textContent = "Reply";
+    reply.onclick = function () { withReply(el, "Your answer\\u2026", "Send", function (answer) { return cmd(["question", "answer", q.id, answer]); }); };
+    actions.appendChild(reply);
+    el.appendChild(actions);
+    return el;
+  }
+
   function eventLine(e) {
     var line = document.createElement("div"); line.className = "line";
     var bad = /fail|error|reject|blocked|anomaly|expired|uncoverable/.test(e.type);
@@ -282,11 +409,37 @@ export const dashboardHtml = `<!doctype html>
       var noTasks = document.createElement("p"); noTasks.style.color = "var(--dimmer)"; noTasks.style.fontSize = "13px"; noTasks.textContent = "No tasks.";
       taskCard.appendChild(noTasks);
     } else {
-      var maxTask = Math.max.apply(null, counts.concat([1]));
-      order.forEach(function (k, i) { taskCard.appendChild(hbar(k, counts[i], maxTask, String(counts[i]), BAR_COLORS[i % BAR_COLORS.length])); });
+      var sumLine = document.createElement("div"); sumLine.className = "task-summary";
+      var parts = [];
+      order.forEach(function (k, i) { if (counts[i] > 0) parts.push(counts[i] + " " + k); });
+      sumLine.textContent = parts.join(", ");
+      taskCard.appendChild(sumLine);
+      var list = document.createElement("div"); list.textContent = "loading\\u2026";
+      taskCard.appendChild(list);
+      api(projPath(p.id, "/tasks")).then(function (tasks) {
+        list.innerHTML = "";
+        tasks.slice().sort(function (a, b) { return order.indexOf(a.status) - order.indexOf(b.status); }).forEach(function (t) { list.appendChild(taskRow(t)); });
+      }).catch(function () { list.textContent = "Couldn't load tasks."; });
     }
     grid.appendChild(taskCard);
     detail.appendChild(grid);
+
+    var reviewCard = document.createElement("div"); reviewCard.className = "card"; reviewCard.style.marginBottom = "18px";
+    var rh = document.createElement("h3"); rh.textContent = "Needs you"; reviewCard.appendChild(rh);
+    var reviewBody = document.createElement("div"); reviewBody.textContent = "loading\\u2026";
+    reviewCard.appendChild(reviewBody);
+    detail.appendChild(reviewCard);
+    Promise.all([api(projPath(p.id, "/review")), api(projPath(p.id, "/questions"))]).then(function (r) {
+      reviewBody.innerHTML = "";
+      var tasks = r[0], questions = r[1];
+      if (!tasks.length && !questions.length) {
+        var none2 = document.createElement("p"); none2.style.color = "var(--dimmer)"; none2.style.fontSize = "13px"; none2.textContent = "Nothing needs you right now.";
+        reviewBody.appendChild(none2);
+        return;
+      }
+      questions.forEach(function (q) { reviewBody.appendChild(reviewQuestionItem(q)); });
+      tasks.forEach(function (t) { reviewBody.appendChild(reviewTaskItem(t)); });
+    }).catch(function () { reviewBody.textContent = "Couldn't load review items."; });
 
     var agentsCard = document.createElement("div"); agentsCard.className = "card"; agentsCard.style.marginBottom = "18px";
     var ah = document.createElement("h3"); ah.textContent = "Agents"; agentsCard.appendChild(ah);
@@ -306,7 +459,7 @@ export const dashboardHtml = `<!doctype html>
     term.textContent = "loading...";
     evCard.appendChild(term);
     detail.appendChild(evCard);
-    api(eventsPath(p.id)).then(function (evs) {
+    api(projPath(p.id, "/events?limit=40")).then(function (evs) {
       term.innerHTML = "";
       if (!evs.length) { var e = document.createElement("div"); e.className = "empty"; e.textContent = "No events yet."; term.appendChild(e); return; }
       evs.slice().reverse().forEach(function (e) { term.appendChild(eventLine(e)); });
