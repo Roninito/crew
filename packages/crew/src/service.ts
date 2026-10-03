@@ -11,7 +11,7 @@ import { dashboardHtml } from "./dashboard";
 import { ensureMachineHome, machineConfig, machineHome } from "./machine";
 import { listProjects, registryMtimeMs } from "./registry";
 import { statusData } from "./runner";
-import { createProjectRuntime, type ProjectRuntime } from "./server";
+import { createProjectRuntime, dispatcherStatusFor, type ProjectRuntime } from "./server";
 
 type WsData = { projects: Set<string> | null };
 
@@ -77,6 +77,8 @@ export async function serveMachine(): Promise<void> {
         for (const [id, rt] of runtimes) out[id] = statusData(rt.c);
         return json(out);
       }
+      if (url.pathname === "/dispatcher")
+        return json({ projects: [...runtimes].map(([id, rt]) => ({ id, ...dispatcherStatusFor(rt.c) })) });
       const p = url.pathname.match(/^\/p\/([^/]+)(\/.*)$/);
       if (p) {
         const rt = runtimes.get(p[1]!);

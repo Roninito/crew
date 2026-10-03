@@ -1,5 +1,6 @@
-// Agents: scaffold from templates, lint, enable/disable, list.
+// Agents: scaffold from templates, lint, enable/disable, list, inspect and edit.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import {
   type Args,
   type Crew,
@@ -63,6 +64,58 @@ export function agentsCmd(c: Crew, o: Out): void {
     o.say(
       `${a.name.padEnd(14)} ${a.def.enabled ? "enabled " : "disabled"}  ${a.def.runner}/${a.def.model ?? "-"}  can: ${(a.def.can ?? []).join(",")}`,
     );
+}
+
+function readText(path: string): string {
+  if (!existsSync(path)) return "";
+  return readFileSync(path, "utf8");
+}
+
+export function agentsShow(c: Crew, name: string, o: Out): void {
+  const a = getAgent(c, name);
+  const memoryPath = join(a.dir, "memory.md");
+  o.json = {
+    name: a.name,
+    path: join(a.dir, "agent.md"),
+    memory: memoryPath,
+    def: a.def,
+  };
+  o.say(`Name:    ${a.name}`);
+  o.say(`Status:  ${a.def.enabled ? "enabled" : "disabled"}`);
+  o.say(`Runner:  ${a.def.runner}`);
+  o.say(`Model:   ${a.def.model ?? "-"}`);
+  o.say(`Role:    ${a.def.role ?? "-"}`);
+  o.say(`Can:     ${(a.def.can ?? []).join(", ") || "-"}`);
+  o.say(`Schedule:${a.def.schedule ?? "-"}`);
+  o.say(`Subs:    ${(a.def.subscribes ?? []).join(", ") || "-"}`);
+  o.say(`Memory:  ${memoryPath}`);
+}
+
+function editor(): string {
+  return process.env.EDITOR || process.env.VISUAL || "vi";
+}
+
+function editPath(path: string): void {
+  const ed = editor();
+  const r = spawnSync(ed, [path], { stdio: "inherit" });
+  if (r.error) throw new CrewError(`Failed to run editor ${ed}: ${r.error.message}`);
+}
+
+export function agentEdit(c: Crew, name: string, o: Out): void {
+  const a = getAgent(c, name);
+  const p = join(a.dir, "agent.md");
+  editPath(p);
+  o.json = { name, path: p };
+  o.say(`Edited ${p}. Run "crew agent lint ${name}" if you changed the definition.`);
+}
+
+export function agentMemory(c: Crew, name: string, o: Out): void {
+  const a = getAgent(c, name);
+  const p = join(a.dir, "memory.md");
+  if (!existsSync(p)) writeFileSync(p, `# ${name} memory\n\nLasting lessons, one line each, newest last.\n\n`);
+  editPath(p);
+  o.json = { name, path: p };
+  o.say(`Edited ${p}`);
 }
 
 export function agentNew(c: Crew, a: Args, o: Out): void {

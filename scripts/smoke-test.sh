@@ -27,11 +27,21 @@ TOKEN="$(sed -n 's/^  token: "\(.*\)"/\1/p' "$VAULT/crew/crew.md")"
 
 "${CREW[@]}" status >/dev/null && pass "status"
 
+# TUI: Ink drives the screen through stdin in raw mode, so piped stdin is refused
+# with a clear message instead of starting (and stack-tracing).
+if echo piped | "${CREW[@]}" tui >/dev/null 2>&1; then fail "tui should refuse piped stdin"; else pass "tui refuses piped stdin"; fi
+# (Capture first: under pipefail the refusal's own non-zero exit would mask grep's.)
+OUT="$(echo piped | "${CREW[@]}" tui 2>&1 || true)"
+echo "$OUT" | grep -q "interactive terminal" \
+  && pass "tui refusal names the fix (a real terminal)" \
+  || fail "tui refusal should name the fix"
+
 # Built-in agents ship pre-filled (no {{BLANK: ...}} markers) and lint clean out of the box --
 # verifier enabled, planner/scout/devops/watcher disabled. A blank or a bad frontmatter field in
 # any of these would otherwise go unnoticed until a real vault hit it.
 for BUILTIN in verifier planner scout devops watcher; do
   "${CREW[@]}" agent lint "$BUILTIN" >/dev/null && pass "built-in agent $BUILTIN lints clean" || fail "built-in agent $BUILTIN fails lint"
+  "${CREW[@]}" agent show "$BUILTIN" >/dev/null && pass "built-in agent $BUILTIN is showable" || fail "built-in agent $BUILTIN not showable"
 done
 grep -q "^enabled: true$" "$VAULT/crew/agents/verifier/agent.md" && pass "verifier ships enabled" || fail "verifier should ship enabled"
 for BUILTIN in planner scout devops watcher; do
@@ -57,6 +67,11 @@ A="$VAULT/crew/agents/tester/agent.md"
 perl -0pi -e 's/\{\{BLANK:.*?\}\}/filled/gs' "$A"
 "${CREW[@]}" agent lint tester >/dev/null && pass "lint passes after filling"
 "${CREW[@]}" agent enable tester >/dev/null && pass "agent enabled"
+
+# Agent show/edit/memory: inspect and edit an agent's files.
+"${CREW[@]}" agent show tester | grep -q "runner" && pass "agent show prints a summary"
+EDITOR="cat" "${CREW[@]}" agent edit tester | grep -q "name: tester" && pass "agent edit opens agent.md in \$EDITOR"
+EDITOR="cat" "${CREW[@]}" agent memory tester | grep -q "tester memory" && pass "agent memory opens memory.md in \$EDITOR"
 
 # Agent set: changes only the fields given, in place, without disturbing anything else in the file.
 "${CREW[@]}" agent set tester --runner opencode --model "opencode/claude-sonnet-5" >/dev/null
@@ -251,6 +266,9 @@ curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && pass "server health"
 curl -sf -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/status" | grep -q '"agents"' && pass "API status"
 curl -sf -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"argv":["task","new","Wake test","--needs","demo","--accept","x"],"as":"human"}' "http://127.0.0.1:$PORT/cmd" | grep -q '"code":0' && pass "API command"
+D="$(curl -sf -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/dispatcher")"
+echo "$D" | grep -q '"agents"' && echo "$D" | grep -q '"review"' && echo "$D" | grep -q '"questions"' \
+  && pass "API dispatcher rollup" || fail "/dispatcher rollup missing keys"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/")" = "200" ] && pass "dashboard shell at / needs no token" || fail "dashboard route should be exempt from the auth check"
 curl -sf "http://127.0.0.1:$PORT/" | grep -q "<title>crew</title>" && pass "dashboard shell served" || fail "dashboard html missing"
 for i in $(seq 1 20); do grep -q '"session.ended".*"tester"' "$VAULT/crew/events/"*.jsonl && break; sleep 0.5; done
@@ -345,6 +363,47 @@ for i in $(seq 1 40); do "$COMPILED" jobs | grep "$JID" | grep -q "succeeded\|fa
   && pass "compiled binary: crew job run actually dispatches and completes" \
   || { cat "$TMP/compiled-server.log"; echo "--- $JID run.log ---"; cat "$VAULT/crew/jobs/$JID/run.log" 2>&1; fail "compiled binary: $JID didn't succeed -- the exact self-respawn regression this guards, or see run.log above"; }
 
+# Compiled binary: the TUI refuses piped stdin with the same clear message, and --
+# under a real terminal -- boots and quits cleanly on q. script(1) provides the
+# pty Ink's raw mode needs; its flags differ between BSD and util-linux.
+OUT="$(echo piped | "$COMPILED" tui 2>&1 || true)"
+echo "$OUT" | grep -q "interactive terminal" \
+  && pass "compiled binary: tui refuses piped stdin with a clear message" \
+  || fail "compiled binary: tui piped-stdin refusal text wrong"
+if command -v script >/dev/null; then
+  if [ "$(uname)" = "Darwin" ]; then
+    (sleep 3; printf 'q') | script -qe /dev/null "$COMPILED" tui >/dev/null 2>&1 \
+      && pass "compiled binary: tui boots under a pty and quits on q" \
+      || fail "compiled binary: tui didn't quit cleanly under a pty"
+  else
+    CMD="$(printf '%q ' "$COMPILED" tui)"
+    (sleep 3; printf 'q') | script -qec "$CMD" /dev/null >/dev/null 2>&1 \
+      && pass "compiled binary: tui boots under a pty and quits on q" \
+      || fail "compiled binary: tui didn't quit cleanly under a pty"
+  fi
+else
+  echo "skip   tui pty boot check (no script(1) on PATH)"
+fi
+
+# No project in scope: the TUI opens the all-projects overview instead of erroring.
+# An empty CREW_HOME keeps this hermetic (no dependence on whatever the machine
+# running the test happens to have registered).
+if command -v script >/dev/null; then
+  mkdir -p "$TMP/emptyhome"
+  if [ "$(uname)" = "Darwin" ]; then
+    (cd "$TMP" && (sleep 3; printf 'q') | env -u CREW_VAULT -u CREW_PROJECT CREW_HOME="$TMP/emptyhome" script -qe /dev/null "$COMPILED" tui >/dev/null 2>&1) \
+      && pass "compiled binary: tui opens the projects overview with no project in scope" \
+      || fail "compiled binary: tui with no project didn't boot cleanly under a pty"
+  else
+    CMD="env -u CREW_VAULT -u CREW_PROJECT CREW_HOME='$TMP/emptyhome' $COMPILED tui"
+    (cd "$TMP" && (sleep 3; printf 'q') | script -qec "$CMD" /dev/null >/dev/null 2>&1) \
+      && pass "compiled binary: tui opens the projects overview with no project in scope" \
+      || fail "compiled binary: tui with no project didn't boot cleanly under a pty"
+  fi
+else
+  echo "skip   tui overview boot check (no script(1) on PATH)"
+fi
+
 # --- Phase 1: the machine service (crew serve with no --vault), many projects behind one port ---
 # A separate CREW_HOME so this can never touch a real machine home, and CREW_VAULT unset so
 # --project resolution (not the leftover single-vault env var) is what actually gets exercised.
@@ -400,6 +459,9 @@ curl -sf "http://127.0.0.1:$MPORT/health" >/dev/null && pass "machine service: h
 curl -sf -H "Authorization: Bearer $MTOKEN" "http://127.0.0.1:$MPORT/projects" | grep -q '"id":"proja"' \
   && curl -sf -H "Authorization: Bearer $MTOKEN" "http://127.0.0.1:$MPORT/projects" | grep -q '"id":"projb"' \
   && pass "machine service: /projects lists both over HTTP" || fail "/projects missing a project"
+MD="$(curl -sf -H "Authorization: Bearer $MTOKEN" "http://127.0.0.1:$MPORT/dispatcher")"
+echo "$MD" | grep -q '"id":"proja"' && echo "$MD" | grep -q '"id":"projb"' && echo "$MD" | grep -q '"blocked"' \
+  && pass "machine service: /dispatcher rolls up both projects" || fail "/dispatcher missing a project"
 
 for i in $(seq 1 20); do
   grep -q '"session.started"' "$PROJ_A/crew/events/"*.jsonl 2>/dev/null && grep -q '"session.started"' "$PROJ_B/crew/events/"*.jsonl 2>/dev/null && break

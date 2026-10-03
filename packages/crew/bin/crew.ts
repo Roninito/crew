@@ -12,6 +12,7 @@ import { findProjectById, findProjectByPath, listProjects, splitQualified } from
 import { sessionRun } from "../src/runner";
 import { serveMachine } from "../src/service";
 import { serve } from "../src/server";
+import { runTui } from "../src/tui/index";
 
 function print(o: Out, json: boolean): void {
   if (json) console.log(JSON.stringify(o.json ?? { out: o.lines }, null, 2));
@@ -142,6 +143,26 @@ async function main(): Promise<number> {
     if (argv[i]?.startsWith("--vault=") || argv[i]?.startsWith("--project=")) continue;
     const q = qualifiedProjectId ? splitQualified(argv[i] ?? "") : null;
     clean.push(q && q.project === qualifiedProjectId ? q.local : argv[i]!);
+  }
+  if (cmd === "tui") {
+    // An explicit target (--vault/--project/CREW_VAULT or a qualified id) resolves
+    // strictly and still errors loudly when it names nothing. With no target the
+    // TUI opens on the all-projects overview instead of refusing to launch --
+    // Enter drills into a project, Esc comes back out. Handled before the shared
+    // resolveProject below, which would throw for the no-project case.
+    const narrowed = vaultFlag || process.env.CREW_VAULT || flag(a, "project") || qualifiedProjectId;
+    if (narrowed) {
+      await runTui(resolveProject(vaultFlag, a, qualifiedProjectId));
+    } else {
+      let c: Crew | null = null;
+      try {
+        c = resolveProject(vaultFlag, a, qualifiedProjectId);
+      } catch {
+        /* not inside a project; the overview is the launch */
+      }
+      await runTui(c);
+    }
+    return 0;
   }
   const c = resolveProject(vaultFlag, a, qualifiedProjectId);
   if (cmd === "serve") {

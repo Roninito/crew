@@ -1,5 +1,5 @@
 // Command router. The CLI and the HTTP API both call run(), so behavior is identical everywhere.
-import { agentEnable, agentLint, agentNew, agentRemove, agentSet, agentsCmd } from "./agents";
+import { agentEnable, agentLint, agentNew, agentRemove, agentSet, agentsCmd, agentEdit, agentMemory, agentsShow } from "./agents";
 import { emitCmd, eventsCmd, logCmd, logs, post, spendCmd } from "./comms";
 import { type Crew, CrewError, Out, flag, parseArgs, withMutex } from "./core";
 import { jobKill, jobRun, jobsCmd } from "./jobs";
@@ -26,6 +26,9 @@ Setup and machine service (machine-scoped, not project-scoped)
 Team
   status                                   What's running, what's stuck, what needs you
   agents                                   List agents
+  agent show <name>                        Agent definition details
+  agent edit <name>                        Open agent.md in $EDITOR
+  agent memory <name>                      Open memory.md in $EDITOR
   agent new <name> --template worker --runner claude --model sonnet --can a,b
   agent lint <name>                        Check an agent definition (blanks, runner, locks)
   agent enable|disable <name>
@@ -66,10 +69,11 @@ Control
   spend [<agent> <usd>]        stop --all        resume
   serve                        Run the crew server: --vault <path> for one project (v0), no
                                 flag to run the machine service for every registered project
+  tui                          Full-screen terminal dashboard (this project, or all projects with none in scope; local only)
 `;
 
 // Commands that change shared state run under the cross-process mutex.
-const MUTATING = new Set(["task.new", "task.update", "claim", "release", "renew", "post", "emit", "log", "agent.new", "agent.enable", "agent.disable", "agent.set", "agent.remove", "install", "verdict", "job.run", "spend", "resume", "question.new", "question.answer"]);
+const MUTATING = new Set(["task.new", "task.update", "claim", "release", "renew", "post", "emit", "log", "agent.new", "agent.enable", "agent.disable", "agent.set", "agent.edit", "agent.memory", "agent.remove", "install", "verdict", "job.run", "spend", "resume", "question.new", "question.answer"]);
 
 export async function run(c: Crew, argv: string[]): Promise<Out> {
   const a = parseArgs(argv);
@@ -82,6 +86,12 @@ export async function run(c: Crew, argv: string[]): Promise<Out> {
         return statusCmd(c, o);
       case "agents":
         return agentsCmd(c, o);
+      case "agent.show":
+        return agentsShow(c, a._[2] ?? "", o);
+      case "agent.edit":
+        return agentEdit(c, a._[2] ?? "", o);
+      case "agent.memory":
+        return agentMemory(c, a._[2] ?? "", o);
       case "agent.new":
         return agentNew(c, a, o);
       case "agent.lint":

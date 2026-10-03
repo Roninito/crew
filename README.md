@@ -90,6 +90,7 @@ crew install packs/asset-pipeline.zip --force
 - Agents are launched by crew with their runner (Claude Code, OpenCode, or any command in `crew.md` runners), with `CREW_AGENT`, `CREW_VAULT` and `CREW_TASK` set. Every agent session still does plain direct file access to its own project regardless of v0 or machine dispatch -- nothing crosses a process/network boundary to run a session.
 - Long work runs as jobs: `crew job run --script x.py` starts it detached, the agent ends its session, and crew wakes it on `job.succeeded`, `job.failed` or `job.timeout`. Job scripts get helpers: `from crew import emit, progress, result, renew` in Python, or `packages/helpers/bun/crew.ts` in Bun.
 - An agent that needs an open-ended answer from you, not a deliverable to verify, asks with `crew question new "<topic>" --text "..."` -- it shows up in Wrangler's Review view with an Answer box, and `crew question answer <id> "..."` wakes just that agent with the answer.
+- `crew tui` is a full-screen terminal dashboard. With a project in scope it shows that project's status bar, agent sidebar, and Board/Events/Logs tabs; with no project it opens an all-projects overview (Enter drills in, Esc back out). Same approve/reject/answer/new-task actions as the CLI. Local-only (direct file reads, in-process commands, no HTTP/token) and needs a real terminal.
 
 ## Scripts
 

@@ -39,7 +39,15 @@ if [ -n "$ASSET" ]; then
   mkdir -p "$BIN_DIR"
   curl -fsSL "$BASE/$ASSET" -o "$BIN_DIR/crew.tmp"
   chmod +x "$BIN_DIR/crew.tmp"
-  mv "$BIN_DIR/crew.tmp" "$BIN_DIR/crew"
+  # macOS caches the ad-hoc signature of a binary by path; in-place overwrite can
+  # cause taskgated to SIGKILL running instances with "Code Signature Invalid".
+  # Rename the new file to a fresh vnode, then sign it so macOS trusts it.
+  mv "$BIN_DIR/crew.tmp" "$BIN_DIR/crew.new"
+  if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null; then
+    codesign --sign - --force --preserve-metadata=identifier,entitlements,flags,runtime "$BIN_DIR/crew.new" 2>/dev/null || true
+    xattr -dr com.apple.quarantine "$BIN_DIR/crew.new" 2>/dev/null || true
+  fi
+  mv "$BIN_DIR/crew.new" "$BIN_DIR/crew"
   echo "crew installed in $BIN_DIR"
   case ":$PATH:" in
     *":$BIN_DIR:"*) ;;

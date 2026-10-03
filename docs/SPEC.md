@@ -10,7 +10,7 @@ Two pieces run one vault's agent team. **crew** is a standalone Bun CLI and serv
 
 **Who it's for.** A solo builder who works inside Obsidian with an AI copilot (Copilot plugin, Claude, or another harness). The human and their copilot design, create, and supervise agents at a high level, and take hands-on tasks themselves alongside the agents.
 
-**Vault only.** Every piece of state lives as files in the vault. One crew server runs per vault. crew shares no file formats with rbots or other systems. Other tools, including rbots agents, can still talk to crew through its CLI, HTTP API, or MCP endpoint.
+**Vault only.** Every piece of state lives as files in the vault. One crew server runs per vault. crew shares no file formats with rbots or other systems. Other tools, including rbots agents, can still talk to crew through its CLI or HTTP API. (An MCP endpoint is planned but not built yet -- see "Not yet built" below.)
 
 **Platform.** crew runs on any desktop with Bun, with or without Obsidian open. Wrangler runs on Obsidian desktop. Obsidian mobile can read the board, logs and reviews once the vault syncs, but can't run agents.
 
@@ -69,6 +69,8 @@ crew does all the work, so the team keeps running even when Obsidian is closed. 
 - **Wrangler attaches to the machine service whenever one is healthy, for any vault** -- not gated on that vault having been migrated first. On load, it checks for a running machine service; if healthy, it looks the vault up by path. Found and active: attach, no child process spawned, every read/write goes through `/p/<id>/*` instead of the vault owning its own server. Found and paused: a "paused" state with a resume button. Not found: an existing v0 vault (has `crew/crew.md`) gets **auto-migrated** (`crew migrate` itself safely stops that vault's own live server first, so this handles a currently-running legacy server too, not just a cold one); a vault with no `crew/` at all gets the same `crew init` call `ensureVaultSetup()` already made. If no machine service is healthy, Wrangler falls back to exactly its original behavior -- spawning its own `crew serve --vault <path>` when `autoStart` is on. "Stop" in attach mode means `crew project pause <id>`, never touching the shared service (closing Obsidian never stops it either, since other projects may depend on it). A new **All crews** view (`GET /projects`) shows every registered project at once, with pause/resume, independent of which vault Wrangler is actually open in.
 
 - **Qualified ids** (`art:T-0311`) let a human on the terminal reference another registered project's item directly, without `--project`. A qualified id in the arguments joins `--project`/`CREW_PROJECT` at the same resolution priority (right after `--vault`/`CREW_VAULT`, which always wins outright); the matched arg's `art:` prefix is stripped before the cleaned argv reaches the target project, so no local command needs to know qualified ids exist. Scoped to the CLI edge only, on purpose: a positional arg is only ever treated as qualified when its project half matches a *registered* project id, so this can never misfire on an argument that merely contains a colon. No wire-format change, no auth implication either way.
+
+- **Fleet rollup for outside monitors.** Authenticated `GET /dispatcher` returns one project's digest in v0 mode and every active project's in machine mode (`{ projects: [{ id, paused, agents, tasks, review[], questions[], blocked[], jobs, spend }] }`) -- agent states plus the actionable ID lists, so a watcher (e.g. Ronin's dispatcher duty) needs one call instead of several per project.
 
 **Not yet built (later phases, same numbering as the architecture doc this followed):** per-session tokens and enforcing that agent sessions/jobs go through the service, cross-project grants and links (`crew://`, cross-project trace), machine-wide lock/budget/session-cap *enforcement* (the config fields exist, inert), the crews dashboard, and the `/mcp` endpoint. A design for the full session-tokens/grants/cross-project-task-request model exists (`plans/crew-v1-phase1-migrate-qualified-ids.md`) but the next phase actually planned is narrower: cross-project **event propagation only** -- an agent in one project subscribing to and waking on another registered project's events, without tokens, grants-as-permission-checks, or cross-project task requests. None of any of this touches an existing v0 vault's files or config unless the machine service happens to be healthy *at the moment that vault is opened* -- starting one at all is still a separate, deliberate action (`crew serve` with no `--vault`, or `crew service install`).
 
@@ -159,6 +161,12 @@ crew agent enable blender
 2. The copilot or human replaces each blank.
 3. `crew agent lint` checks the frontmatter schema, runner and model availability, that no blanks remain, and that subscribed events and locks exist. A new agent stays disabled until lint passes. This is a completeness check, not a trust gate.
 4. `crew agent enable` turns it on and posts `agent.created` to the blackboard.
+
+`crew agent show <name>` prints the agent's frontmatter summary (runner, model, can, subscribes, budget, wiki) and the paths to its files.
+
+`crew agent edit <name>` opens `crew/agents/<name>/agent.md` in `$EDITOR` so you can change directives, role, subscriptions, or wiki list. After editing, run `crew agent lint <name>` to re-validate.
+
+`crew agent memory <name>` opens `crew/agents/<name>/memory.md` in `$EDITOR`. This is the agent's own long-term notes; agents read it on every wake and append lessons as they work.
 
 `crew agent set <name> --runner x --model y` changes an existing agent's runner and/or model in place, without touching anything else in its agent.md -- the only way to do this before was hand-editing the YAML frontmatter, which is exactly as error-prone as it sounds for a model name you don't have memorized. Wrangler's sidebar has an **Edit** button per agent that reuses the same runner/model detection the spawn-agent form uses (a live model list where the runner supports one, e.g. `opencode models`) rather than a blank text field.
 
@@ -346,6 +354,8 @@ The human and their copilot manage the team through the same CLI, guided by the 
 | Take a task yourself | `crew claim T-0142 --as human` |
 | Design a new agent | `crew agent new ...`, fill blanks, `crew agent lint`, `crew agent enable` |
 | Stop everything | `crew stop --all` |
+
+**Terminal dashboard (`crew tui`).** A full-screen interactive board. Launched with a project (`--vault`/`--project`/cwd, same rules as every other command) it opens straight on that project: top status bar, agent sidebar with protected zones, and Board/Events/Logs tabs. Launched with no project in scope it opens on an all-projects overview instead of erroring: an aggregated status bar plus one row per registered active project (live state, agents running/total, task counts, open questions, needs-you, spend). Enter drills into the focused project (including new-task there), Esc comes back out to the overview. The board columns are crew's real task statuses (inbox/ready/claimed/verify/review/done/blocked), and open agent questions pin to the top of Events. It is local-only -- it reads through the same functions as `crew status` and writes through in-process `run()`, with no HTTP and no token. Needs an interactive terminal; through a pipe it says so and exits instead of starting.
 
 ## Locks, budgets and limits
 

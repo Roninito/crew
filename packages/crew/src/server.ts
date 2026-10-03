@@ -42,6 +42,25 @@ function shouldWake(c: Crew, ag: Agent, ev: CrewEvent): boolean {
   return true;
 }
 
+// One project's slice of GET /dispatcher: everything a fleet monitor (e.g. Ronin's
+// dispatcher duty) needs in one call -- agent states plus the actionable ID lists.
+export function dispatcherStatusFor(c: Crew) {
+  const s = statusData(c);
+  const tasks = listTasks(c);
+  return {
+    paused: s.paused,
+    agents: s.agents.map((a) => ({ name: a.name, state: a.state, task: a.task })),
+    tasks: s.tasks,
+    review: tasks.filter((t) => t.status === "review" || (t.sampled && !t.sampled_ack)).map((t) => t.id),
+    questions: listQuestions(c)
+      .filter((q) => q.status === "open")
+      .map((q) => q.id),
+    blocked: tasks.filter((t) => t.status === "blocked").map((t) => t.id),
+    jobs: s.jobs,
+    spend: s.spend,
+  };
+}
+
 export type ProjectRuntime = {
   c: Crew;
   clients: Set<ServerWebSocket<unknown>>;
@@ -215,6 +234,8 @@ export function createProjectRuntime(c: Crew, opts?: ProjectRuntimeOpts): Projec
         const since = Number(url.searchParams.get("since") ?? Date.now() - 36e5);
         return json(readEvents(c, since).slice(-Number(url.searchParams.get("limit") ?? 200)));
       }
+      case "/dispatcher":
+        return json({ projects: [{ id: findProjectByPath(c.vault)?.id ?? null, ...dispatcherStatusFor(c) }] });
       case "/cmd": {
         if (req.method !== "POST") return json({ error: "POST only" }, 405);
         const body = (await req.json()) as { argv?: string[]; as?: string };
